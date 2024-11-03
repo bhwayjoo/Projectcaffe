@@ -52,18 +52,25 @@ class Order(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def calculate_total(self):
+        total = 0
         if self.pk:  # Only calculate if the order exists in the database
-            return sum(item.quantity * item.menu_item.price for item in self.orderitem_set.all())
-        return 0
+            total = sum(item.quantity * item.menu_item.price for item in self.orderitem_set.all())
+        return total
     
     def save(self, *args, **kwargs):
-        if not self.pk:  # If this is a new order
+        # Remove force_insert if it's in kwargs
+        kwargs.pop('force_insert', None)
+        
+        is_new = self.pk is None
+        if is_new:
             super().save(*args, **kwargs)  # Save first to get a primary key
+            
         self.total_amount = self.calculate_total()
         super().save(*args, **kwargs)  # Save again with the calculated total
         
     def __str__(self):
         return f"Order #{self.pk} - {self.status}"
+
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE)

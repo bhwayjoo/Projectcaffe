@@ -7,6 +7,7 @@ router.register(r'menu-items', views.MenuItemViewSet)
 router.register(r'tables', views.TableViewSet)
 router.register(r'orders', views.OrderViewSet)
 router.register(r'broken-items', views.BrokenItemViewSet)
+router.register(r'categories', views.CategoryViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
