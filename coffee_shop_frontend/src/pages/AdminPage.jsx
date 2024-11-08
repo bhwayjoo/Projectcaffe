@@ -54,30 +54,28 @@ const AdminPage = () => {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 p-6 max-w-3xl mx-auto">
-          <Card>
-            <CardContent className="p-6">
-              <Routes>
-                <Route path="/menu-management" element={<MenuManagement />} />
-                <Route path="/orders" element={<OrderManagement />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route
-                  path="/"
-                  element={
-                    <div className="text-center py-12">
-                      <h2 className="text-2xl font-bold mb-4">
-                        Welcome to the Admin Panel
-                      </h2>
-                      <p className="text-gray-600">
-                        Select a section from the sidebar to get started
-                      </p>
-                    </div>
-                  }
-                />
-              </Routes>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardContent className="p-6">
+            <Routes>
+              <Route path="/menu-management" element={<MenuManagement />} />
+              <Route path="/orders" element={<OrderManagement />} />
+              <Route path="/inventory" element={<Inventory />} />
+              <Route
+                path="/"
+                element={
+                  <div className="text-center py-12">
+                    <h2 className="text-2xl font-bold mb-4">
+                      Welcome to the Admin Panel
+                    </h2>
+                    <p className="text-gray-600">
+                      Select a section from the sidebar to get started
+                    </p>
+                  </div>
+                }
+              />
+            </Routes>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

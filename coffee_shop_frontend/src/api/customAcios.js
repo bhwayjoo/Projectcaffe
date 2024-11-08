@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = "http://192.168.11.146:8000/api";
+const API_URL = "https://projectcaffe.onrender.com/api";
 
 export const api = axios.create({
   baseURL: API_URL,
