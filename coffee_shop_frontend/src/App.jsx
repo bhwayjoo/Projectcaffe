@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import MenuPage from "./pages/MenuPage";
 import AdminPage from "./pages/AdminPage";
+import Test from "./pages/test";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,11 @@ const App = () => {
           <Route path="/" element={<MenuPage />} />
           <Route path="/admin/*" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
+          <Route
+            path="/test/
+          "
+            element={<Test />}
+          />
         </Routes>
       </Router>
       <Toaster position="bottom-right" />

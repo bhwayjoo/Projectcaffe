@@ -5,9 +5,14 @@ import { MenuList } from "../components/MenuList";
 import { Cart } from "../components/Cart";
 import { createOrder } from "../api/customAcios";
 import { QrReader } from "react-qr-reader";
-import { Camera } from "lucide-react";
+import { Camera, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+
+const NFC_TABLE_MAPPING = {
+  "43:66:75:f3": "1",
+  "e3:18:4f:f3": "2",
+};
 
 const MenuPage = () => {
   const [cartItems, setCartItems] = useState([]);
@@ -16,6 +21,8 @@ const MenuPage = () => {
   const [qrScanned, setQrScanned] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [isNfcScanning, setIsNfcScanning] = useState(false);
+  const [nfcError, setNfcError] = useState(null);
   const cameraStreamRef = useRef(null);
   const hasShownToastRef = useRef(false);
 
@@ -45,6 +52,57 @@ const MenuPage = () => {
     setCartItems((prev) => prev.filter((i) => i.item.id !== item.id));
   };
 
+  const startNfcScan = async () => {
+    if (!("NDEFReader" in window)) {
+      setNfcError("NFC n'est pas supporté sur cet appareil");
+      toast.error("NFC non supporté");
+      return;
+    }
+
+    try {
+      setIsNfcScanning(true);
+      setNfcError(null);
+
+      const ndef = new window.NDEFReader();
+      await ndef.scan();
+
+      ndef.addEventListener("reading", ({ serialNumber }) => {
+        console.log("NFC Tag ID:", serialNumber);
+
+        // Check for matching UIDs in the mapping
+        const mappedTable = NFC_TABLE_MAPPING[serialNumber];
+        if (mappedTable) {
+          setTableNumber(mappedTable);
+          setQrScanned(true);
+          toast.success(`Table ${mappedTable} identifiée !`);
+        } else {
+          toast.error("Badge non reconnu");
+          console.log("Unrecognized NFC UID:", serialNumber);
+        }
+
+        setIsNfcScanning(false);
+      });
+
+      ndef.addEventListener("error", () => {
+        setNfcError("Erreur lors de la lecture NFC");
+        setIsNfcScanning(false);
+        toast.error("Erreur de lecture NFC");
+      });
+
+      // Add a success toast for scan start
+      toast.success("Approchez votre badge NFC...");
+    } catch (error) {
+      console.error("NFC Error:", error);
+      setNfcError(
+        error.name === "NotAllowedError"
+          ? "Accès NFC refusé. Veuillez l'activer dans les paramètres."
+          : "Erreur lors de l'initialisation NFC"
+      );
+      setIsNfcScanning(false);
+      toast.error("Erreur NFC");
+    }
+  };
+
   const stopCamera = () => {
     if (cameraStreamRef.current) {
       cameraStreamRef.current.getTracks().forEach((track) => {
@@ -56,10 +114,9 @@ const MenuPage = () => {
 
   const startScanner = async () => {
     try {
-      // Configuration plus détaillée pour la caméra
       const constraints = {
         video: {
-          facingMode: { exact: "environment" }, // Force la caméra arrière
+          facingMode: { exact: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
@@ -73,9 +130,8 @@ const MenuPage = () => {
       console.log("First attempt failed, trying fallback:", firstError);
 
       try {
-        // Fallback avec des contraintes plus simples
         const fallbackStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }, // Sans 'exact' pour plus de flexibilité
+          video: { facingMode: "environment" },
         });
         cameraStreamRef.current = fallbackStream;
         setCameraError(null);
@@ -126,7 +182,9 @@ const MenuPage = () => {
 
   const handleCheckout = async () => {
     if (!qrScanned) {
-      toast.error("Veuillez d'abord scanner le QR code de votre table !");
+      toast.error(
+        "Veuillez d'abord scanner le QR code ou le badge NFC de votre table !"
+      );
       return;
     }
     if (cartItems.length === 0) {
@@ -161,7 +219,6 @@ const MenuPage = () => {
     }
   };
 
-  // Nettoyage du flux de la caméra lors du démontage du composant
   React.useEffect(() => {
     return () => {
       stopCamera();
@@ -181,16 +238,31 @@ const MenuPage = () => {
             <div className="mb-8">
               {!showScanner ? (
                 <div className="flex flex-col items-center gap-4">
-                  <Button
-                    onClick={startScanner}
-                    className="flex items-center gap-2"
-                  >
-                    <Camera className="w-4 h-4" />
-                    Scanner le QR code de la table
-                  </Button>
+                  <div className="flex gap-4 flex-wrap justify-center">
+                    <Button
+                      onClick={startScanner}
+                      className="flex items-center gap-2"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Scanner le QR code
+                    </Button>
+                    <Button
+                      onClick={startNfcScan}
+                      disabled={isNfcScanning}
+                      className="flex items-center gap-2"
+                    >
+                      <Wifi className="w-4 h-4" />
+                      {isNfcScanning ? "Lecture NFC..." : "Scanner NFC"}
+                    </Button>
+                  </div>
                   {cameraError && (
                     <Alert variant="destructive" className="mt-4">
                       <AlertDescription>{cameraError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {nfcError && (
+                    <Alert variant="destructive" className="mt-4">
+                      <AlertDescription>{nfcError}</AlertDescription>
                     </Alert>
                   )}
                 </div>
