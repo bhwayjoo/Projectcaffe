@@ -8,6 +8,7 @@ import { QrReader } from "react-qr-reader";
 import { Camera, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import SvgIcon1 from "../logo/SvgIcon1";
 
 const NFC_TABLE_MAPPING = {
   "43:66:75:f3": "1",
@@ -67,9 +68,6 @@ const MenuPage = () => {
       await ndef.scan();
 
       ndef.addEventListener("reading", ({ serialNumber }) => {
-        console.log("NFC Tag ID:", serialNumber);
-
-        // Check for matching UIDs in the mapping
         const mappedTable = NFC_TABLE_MAPPING[serialNumber];
         if (mappedTable) {
           setTableNumber(mappedTable);
@@ -77,9 +75,7 @@ const MenuPage = () => {
           toast.success(`Table ${mappedTable} identifiée !`);
         } else {
           toast.error("Badge non reconnu");
-          console.log("Unrecognized NFC UID:", serialNumber);
         }
-
         setIsNfcScanning(false);
       });
 
@@ -89,10 +85,8 @@ const MenuPage = () => {
         toast.error("Erreur de lecture NFC");
       });
 
-      // Add a success toast for scan start
       toast.success("Approchez votre badge NFC...");
     } catch (error) {
-      console.error("NFC Error:", error);
       setNfcError(
         error.name === "NotAllowedError"
           ? "Accès NFC refusé. Veuillez l'activer dans les paramètres."
@@ -105,9 +99,7 @@ const MenuPage = () => {
 
   const stopCamera = () => {
     if (cameraStreamRef.current) {
-      cameraStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
     }
   };
@@ -127,8 +119,6 @@ const MenuPage = () => {
       setCameraError(null);
       setShowScanner(true);
     } catch (firstError) {
-      console.log("First attempt failed, trying fallback:", firstError);
-
       try {
         const fallbackStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
@@ -137,13 +127,10 @@ const MenuPage = () => {
         setCameraError(null);
         setShowScanner(true);
       } catch (error) {
-        console.error("Camera access error:", error);
         setCameraError(
           error.name === "NotAllowedError"
-            ? "Accès à la caméra refusé. Veuillez autoriser l'accès à la caméra dans les paramètres de votre navigateur."
-            : error.name === "NotFoundError"
-            ? "Aucune caméra trouvée sur votre appareil."
-            : "Impossible d'accéder à la caméra. Veuillez vérifier que votre appareil dispose d'une caméra fonctionnelle."
+            ? "Accès à la caméra refusé. Veuillez autoriser l'accès à la caméra."
+            : "Impossible d'accéder à la caméra."
         );
         toast.error("Accès à la caméra requis pour la numérisation QR");
       }
@@ -165,25 +152,14 @@ const MenuPage = () => {
 
   const handleQrError = (error) => {
     if (error && error?.message !== "No QR code found") {
-      console.error("QR Scan Error:", error);
-      if (error?.name === "NotAllowedError") {
-        setCameraError(
-          "Accès à la caméra refusé. Veuillez autoriser l'accès à la caméra dans les paramètres de votre navigateur."
-        );
-      } else if (error?.name === "NotFoundError") {
-        setCameraError("Aucune caméra trouvée sur votre appareil.");
-      } else {
-        setCameraError(
-          "Échec de la numérisation du QR code. Veuillez réessayer."
-        );
-      }
+      setCameraError("Erreur lors de la numérisation QR.");
     }
   };
 
   const handleCheckout = async () => {
     if (!qrScanned) {
       toast.error(
-        "Veuillez d'abord scanner le QR code ou le badge NFC de votre table !"
+        "Veuillez scanner le QR code ou le badge NFC de votre table !"
       );
       return;
     }
@@ -207,13 +183,8 @@ const MenuPage = () => {
       const response = await createOrder(orderData);
       setCartItems([]);
       toast.success("Commande passée avec succès !");
-      console.log("Order created:", response);
     } catch (error) {
-      console.error("Error creating order:", error);
-      toast.error(
-        error.response?.data?.error ||
-          "Échec de la commande. Veuillez réessayer."
-      );
+      toast.error("Échec de la commande. Veuillez réessayer.");
     } finally {
       setIsLoading(false);
     }
@@ -227,10 +198,11 @@ const MenuPage = () => {
 
   return (
     <>
-      <div className="min-h-screen bg-gray-100">
-        <header className="bg-white shadow-md">
-          <div className="container mx-auto px-4 py-6">
-            <h1 className="text-2xl font-bold">Coffee Shop</h1>
+      <div className="min-h-screen bg-gray-50">
+        <header className="bg-white shadow-md py-4">
+          <div className="container mx-auto flex items-center justify-center">
+            <SvgIcon1 width="50" height="50" className="mr-4" />
+            <h1 className="text-2xl font-bold">Menu</h1>
           </div>
         </header>
         <main className="container mx-auto px-4 py-8">
@@ -269,23 +241,12 @@ const MenuPage = () => {
               ) : (
                 <div className="relative w-full max-w-md mx-auto">
                   <QrReader
-                    constraints={{
-                      facingMode: "environment",
-                    }}
+                    constraints={{ facingMode: "environment" }}
                     onResult={(result, error) => {
-                      if (result) {
-                        handleQrScan(result);
-                      }
-                      if (error) {
-                        handleQrError(error);
-                      }
+                      if (result) handleQrScan(result);
+                      if (error) handleQrError(error);
                     }}
                     className="w-full aspect-square rounded-lg overflow-hidden"
-                    videoStyle={{ width: "100%", height: "100%" }}
-                    containerStyle={{ width: "100%", height: "100%" }}
-                    ViewFinder={() => (
-                      <div className="border-2 border-white absolute top-1/4 left-1/4 w-1/2 h-1/2" />
-                    )}
                   />
                   <Button
                     onClick={() => {
@@ -313,13 +274,12 @@ const MenuPage = () => {
                 onRemoveItem={handleRemoveItem}
                 onCheckout={handleCheckout}
                 isLoading={isLoading}
-                tableNumber={tableNumber}
               />
             </div>
           </div>
         </main>
       </div>
-      <Toaster position="bottom-right" />
+      <Toaster />
     </>
   );
 };
