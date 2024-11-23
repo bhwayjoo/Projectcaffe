@@ -29,6 +29,7 @@ ALLOWED_HOSTS = ['*']
 
 
 # Application definition
+GRAPPELLI_ADMIN_TITLE = "BMMAS Admin Panel"
 
 INSTALLED_APPS = [
     'grappelli',
