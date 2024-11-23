@@ -1,6 +1,11 @@
 from django.contrib import admin
 from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem
 
+
+admin.site.site_header = "My Custom Admin Panel bmmas"
+admin.site.site_title = "Admin Portal bmmas"
+admin.site.index_title = "Welcome to My Admin Panel bmmas"
+
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     list_display = ('name', 'created_at')
