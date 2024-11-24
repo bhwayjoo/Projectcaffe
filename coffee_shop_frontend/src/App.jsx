@@ -10,13 +10,15 @@ import {
 import MenuPage from "./pages/MenuPage";
 import AdminPage from "./pages/AdminPage";
 import Test from "./pages/test";
+import LoginPage from "./pages/LoginPage";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 5 * 60 * 1000,
     },
   },
 });
@@ -26,14 +28,23 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <Router>
         <Routes>
+          {/* Public Routes */}
           <Route path="/" element={<MenuPage />} />
-          <Route path="/admin/*" element={<AdminPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/test" element={<Test />} />
+
+          {/* Protected Routes */}
           <Route
-            path="/test/
-          "
-            element={<Test />}
+            path="/admin/*"
+            element={
+              <ProtectedRoute>
+                <AdminPage />
+              </ProtectedRoute>
+            }
           />
+
+          {/* Fallback Route */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
       <Toaster position="bottom-right" />

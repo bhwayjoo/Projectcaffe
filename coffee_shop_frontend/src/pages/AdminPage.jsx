@@ -34,7 +34,7 @@ const AdminPage = () => {
     <div className="min-h-screen bg-gray-100">
       <div className="flex">
         {/* Sidebar */}
-        <div className="w-64 min-h-screen bg-white shadow-md">
+        <div className="w-64 min-h-screen bg-white shadow-md sticky top-0 hidden lg:block">
           <div className="p-4">
             <h1 className="text-xl font-bold mb-6">Admin Panel</h1>
             <nav className="space-y-2">
@@ -54,28 +54,30 @@ const AdminPage = () => {
         </div>
 
         {/* Main Content */}
-        <Card>
-          <CardContent className="p-6">
-            <Routes>
-              <Route path="/menu-management" element={<MenuManagement />} />
-              <Route path="/orders" element={<OrderManagement />} />
-              <Route path="/inventory" element={<Inventory />} />
-              <Route
-                path="/"
-                element={
-                  <div className="text-center py-12">
-                    <h2 className="text-2xl font-bold mb-4">
-                      Welcome to the Admin Panel
-                    </h2>
-                    <p className="text-gray-600">
-                      Select a section from the sidebar to get started
-                    </p>
-                  </div>
-                }
-              />
-            </Routes>
-          </CardContent>
-        </Card>
+        <div className="flex-1 p-6">
+          <Card>
+            <CardContent>
+              <Routes>
+                <Route path="/menu-management" element={<MenuManagement />} />
+                <Route path="/orders" element={<OrderManagement />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route
+                  path="/"
+                  element={
+                    <div className="text-center py-12">
+                      <h2 className="text-2xl font-bold mb-4">
+                        Welcome to the Admin Panel
+                      </h2>
+                      <p className="text-gray-600">
+                        Select a section from the sidebar to get started
+                      </p>
+                    </div>
+                  }
+                />
+              </Routes>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

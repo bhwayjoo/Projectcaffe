@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem
-
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.models import User, Group
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
@@ -9,13 +10,23 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class MenuItemSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
-    
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = MenuItem
-        fields = ['id', 'name', 'description', 'price', 'category', 
-                 'category_name', 'image', 'is_available', 
-                 'created_at', 'updated_at']
+        fields = [
+            'id', 'name', 'description', 'price', 'category',
+            'category_name', 'image', 'image_url', 'is_available',
+            'created_at', 'updated_at'
+        ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return None
+
 
 class TableSerializer(serializers.ModelSerializer):
     class Meta:
@@ -104,3 +115,30 @@ class BrokenItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'item_name', 'description', 'reported_by', 
                  'reported_at', 'resolved', 'resolved_at']
         read_only_fields = ['reported_at', 'resolved', 'resolved_at']
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+
+
+
+# Serialize the User for JWT Authentication
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+
+# Token Serializer
+class TokenSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+    access = serializers.CharField()
+
+    @classmethod
+    def get_tokens_for_user(cls, user):
+        refresh = RefreshToken.for_user(user)
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
