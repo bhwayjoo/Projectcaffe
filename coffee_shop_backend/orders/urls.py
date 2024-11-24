@@ -8,7 +8,6 @@ from .views import (
     BrokenItemViewSet,
     LoginAPIView,
 )
-from .consumers import OrderConsumer
 
 
 # Define the Default Router for ViewSets
@@ -24,7 +23,4 @@ urlpatterns = [
     # Include the router's URLs
     path('', include(router.urls)),
     path('login/', LoginAPIView.as_view(), name='login'),
-]
-websocket_urlpatterns = [
-    path("order/", OrderConsumer.as_asgi()),
 ]
