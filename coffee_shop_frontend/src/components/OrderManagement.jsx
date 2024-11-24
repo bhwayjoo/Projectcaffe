@@ -25,12 +25,20 @@ import { api } from "../api/customAcios";
 const OrderManagement = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("all");
-  const [socket, setSocket] = useState(null);
 
-  const { data: orders = [], isLoading } = useQuery("orders", async () => {
-    const response = await api.get("/orders/");
-    return response.data;
-  });
+  const { data: orders = [], isLoading } = useQuery(
+    "orders",
+    async () => {
+      const response = await api.get("/orders/");
+      return response.data;
+    },
+    {
+      // Refetch every second
+      refetchInterval: 1000,
+      // Continue polling even when the window is not focused
+      refetchIntervalInBackground: true,
+    }
+  );
 
   const updateOrderStatus = useMutation(
     ({ orderId, status }) =>
@@ -169,18 +177,6 @@ const OrderManagement = () => {
       </div>
     </Card>
   );
-
-  useEffect(() => {
-    const socket = new WebSocket("ws://127.0.0.1:8000/ws/orders/");
-    socket.onmessage = (event) => {
-      const newOrder = JSON.parse(event.data);
-      queryClient.setQueryData("orders", (oldData) => [newOrder, ...oldData]);
-    };
-    setSocket(socket);
-    return () => {
-      socket.close();
-    };
-  }, [queryClient]);
 
   return (
     <div className="p-6">
