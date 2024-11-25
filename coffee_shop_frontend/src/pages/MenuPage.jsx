@@ -14,6 +14,7 @@ const NFC_TABLE_MAPPING = {
   "43:66:75:f3": "1",
   "e3:18:4f:f3": "2",
   "d6:7f:94:0e": "3",
+  "30:e7:21:01": "4",
 };
 
 const MenuPage = () => {
