@@ -5,7 +5,7 @@ import { getMenuItems } from "../api/customAcios";
 
 export const MenuList = ({ onAddToCart }) => {
   const {
-    data: menuItems,
+    data: menuItems = [],
     isLoading,
     error,
   } = useQuery("menuItems", getMenuItems);

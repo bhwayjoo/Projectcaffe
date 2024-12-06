@@ -159,34 +159,42 @@ const MenuPage = () => {
   };
 
   const handleCheckout = async () => {
-    if (!qrScanned) {
-      toast.error(
-        "Veuillez scanner le QR code ou le badge NFC de votre table !"
-      );
-      return;
-    }
-    if (cartItems.length === 0) {
-      toast.error("Votre panier est vide !");
-      return;
+    if (!tableNumber) {
+      toast.error("Please scan a table QR code first!");
+      return null;
     }
 
+    if (cartItems.length === 0) {
+      toast.error("Your cart is empty!");
+      return null;
+    }
+
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       const orderData = {
         table: tableNumber,
-        status: "pending",
-        items: cartItems.map(({ item, quantity }) => ({
-          menu_item: item.id,
-          quantity,
-          notes: "",
+        items: cartItems.map((cartItem) => ({
+          menu_item: cartItem.item.id,
+          quantity: cartItem.quantity,
         })),
       };
 
       const response = await createOrder(orderData);
-      setCartItems([]);
-      toast.success("Commande passée avec succès !");
+      console.log('Order response:', response); // Debug log
+      
+      if (response?.data?.id) {
+        setCartItems([]);
+        toast.success("Order placed successfully!");
+        return response.data.id;
+      } else {
+        console.error('Invalid response structure:', response); // Debug log
+        throw new Error("No order ID received from server");
+      }
     } catch (error) {
-      toast.error("Échec de la commande. Veuillez réessayer.");
+      const errorMessage = error.response?.data?.message || "Failed to place order. Please try again.";
+      toast.error(errorMessage);
+      console.error("Checkout error:", error);
+      return null;
     } finally {
       setIsLoading(false);
     }

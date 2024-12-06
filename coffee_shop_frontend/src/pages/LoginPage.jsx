@@ -41,39 +41,62 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Admin Login</CardTitle>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-green-100 p-4">
+      <Card className="w-full max-w-md shadow-xl">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-2xl font-bold text-center text-gray-800">
+            Admin Login
+          </CardTitle>
+          <p className="text-center text-gray-600 text-sm">
+            Sign in to access the admin dashboard
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <p className="text-red-500 text-sm">{error}</p>}
-            <Input
-              placeholder="Username"
-              value={formData.username}
-              onChange={(e) =>
-                setFormData({ ...formData, username: e.target.value })
-              }
-              required
-            />
-            <Input
-              type="password"
-              placeholder="Password"
-              value={formData.password}
-              onChange={(e) =>
-                setFormData({ ...formData, password: e.target.value })
-              }
-              required
-            />
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            {error && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                <p className="text-red-600 text-sm">{error}</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Input
+                placeholder="Username"
+                value={formData.username}
+                onChange={(e) =>
+                  setFormData({ ...formData, username: e.target.value })
+                }
+                className="w-full px-3 py-2"
+                required
+                disabled={isLoading}
+              />
+            </div>
+            <div className="space-y-2">
+              <Input
+                type="password"
+                placeholder="Password"
+                value={formData.password}
+                onChange={(e) =>
+                  setFormData({ ...formData, password: e.target.value })
+                }
+                className="w-full px-3 py-2"
+                required
+                disabled={isLoading}
+              />
+            </div>
+            <Button
+              type="submit"
+              className={`w-full bg-green-500 hover:bg-green-600 text-white transition-colors ${
+                isLoading ? 'opacity-75 cursor-not-allowed' : ''
+              }`}
+              disabled={isLoading}
+            >
               {isLoading ? (
-                <>
+                <div className="flex items-center justify-center">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Logging in...
-                </>
+                  Signing in...
+                </div>
               ) : (
-                "Login"
+                'Sign In'
               )}
             </Button>
           </form>

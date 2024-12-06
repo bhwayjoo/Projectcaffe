@@ -7,5 +7,8 @@ gunicorn==23.0.0
 packaging==24.1
 pillow==11.0.0
 sqlparse==0.5.1
-tzdata==2024.2
+tzdata==2024.1
 whitenoise==6.8.2
+channels==4.0.0
+daphne==4.0.0
+channels-redis==4.1.0

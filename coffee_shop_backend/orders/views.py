@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.models import Group
-from .models import BrokenItem, Category, MenuItem, Order, OrderItem, Table
+from .models import BrokenItem, Category, MenuItem, Order, OrderItem, Table, OrderReview
 from .serializers import (
     UserSerializer,
     BrokenItemSerializer,
@@ -16,10 +16,14 @@ from .serializers import (
     OrderSerializer,
     OrderItemSerializer,
     TableSerializer,
+    OrderReviewSerializer
 )
 from django.contrib.auth import authenticate
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Category Management
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -68,11 +72,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     
     def get_permissions(self):
-        """
-        Instantiates and returns the list of permissions that this view requires.
-        Allow POST without authentication, require authentication for all other actions.
-        """
-        if self.action == 'create':
+        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table']:
             permission_classes = [AllowAny]
         else:
             permission_classes = [IsAuthenticated]
@@ -99,22 +99,162 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        print("Received order data:", request.data)  # Debug log
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            order = serializer.save()
+            print("Created order:", order.id)  # Debug log
+            broadcast_new_order(order)  # Broadcast the new order
+            response_data = {
+                'id': order.id,
+                'status': order.status,
+                'message': 'Order created successfully'
+            }
+            print("Sending response:", response_data)  # Debug log
+            return Response(response_data, status=status.HTTP_201_CREATED)
+        print("Serializer errors:", serializer.errors)  # Debug log
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def perform_update(self, serializer):
+        order = serializer.save()
+        broadcast_order_update(order)
+
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
-        order = self.get_object()
-        new_status = request.data.get('status')
+        try:
+            order = self.get_object()
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response(
+                    {'error': 'Status not provided'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        if new_status not in dict(Order.STATUS_CHOICES):
+            # Update order status
+            order.status = new_status
+            order.save()
+            
+            # Broadcast the update
+            broadcast_order_update(order)
+            
+            return Response({
+                'status': 'Order status updated',
+                'order': OrderSerializer(order).data
+            })
+            
+        except Exception as e:
+            logger.error(f"Error updating order status: {str(e)}")
             return Response(
-                {'error': 'Invalid status'},
+                {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        order.status = new_status
-        order.save()
+    @action(detail=True, methods=['get'])
+    def track(self, request, pk=None):
+        """
+        Endpoint for tracking a specific order
+        """
+        try:
+            order = self.get_object()
+            serializer = self.get_serializer(order)
+            return Response(serializer.data)
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Order not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        try:
+            order = self.get_object()
+            order.status = 'cancelled'
+            order.save()
+            broadcast_order_update(order)
+            return Response({'status': 'Order cancelled'})
+        except Exception as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'])
+    def review(self, request, pk=None):
+        order = self.get_object()
+        if order.status != 'delivered':
+            return Response({'error': 'Can only review delivered orders'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = OrderReviewSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(order=order)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def update_table(self, request, pk=None):
+        """
+        Update the table of an order
+        """
+        try:
+            order = self.get_object()
+            table_id = request.data.get('table_id')
+            
+            # Log the incoming request data
+            logger.info(f"Updating table for order {pk}. Data: {request.data}")
+            
+            if table_id is None:
+                return Response(
+                    {'error': 'Table ID is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                table = Table.objects.get(id=table_id)
+                logger.info(f"Found table: {table}")
+            except Table.DoesNotExist:
+                logger.error(f"Table {table_id} not found")
+                return Response(
+                    {'error': f'Table {table_id} not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            except ValueError as e:
+                logger.error(f"Invalid table ID format: {e}")
+                return Response(
+                    {'error': 'Invalid table ID format'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Update the order's table
+            order.table = table
+            order.save()
+            
+            # Get the updated order data
+            serializer = OrderSerializer(order)
+            
+            # Broadcast the update
+            broadcast_order_update(order)
+            
+            logger.info(f"Successfully updated table for order {pk}")
+            
+            return Response({
+                'status': 'Table updated successfully',
+                'order': serializer.data
+            })
+            
+        except Order.DoesNotExist:
+            logger.error(f"Order {pk} not found")
+            return Response(
+                {'error': 'Order not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error updating table for order {pk}: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     @action(detail=False, methods=['get'])
     def analytics(self, request):
@@ -228,6 +368,35 @@ def broadcast_new_order(order):
             }
         }
     )
+
+def broadcast_order_update(order):
+    """Broadcast order update to all connected WebSocket clients"""
+    try:
+        channel_layer = get_channel_layer()
+        order_data = OrderSerializer(order).data
+        
+        # Broadcast to order-specific group
+        async_to_sync(channel_layer.group_send)(
+            f'order_{order.id}',
+            {
+                'type': 'order_update',
+                'content': order_data
+            }
+        )
+        
+        # Also broadcast to menu orders group for general updates
+        async_to_sync(channel_layer.group_send)(
+            'menu_orders',
+            {
+                'type': 'order_update',
+                'content': order_data
+            }
+        )
+        
+        logger.info(f"Order update broadcast for order {order.id}")
+    except Exception as e:
+        logger.error(f"Error broadcasting order update: {str(e)}")
+
 def perform_create(self, serializer):
     order = serializer.save()
     broadcast_new_order(order)

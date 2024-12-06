@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Base API configuration
 export const api = axios.create({
-  baseURL: "https://projectcaffe.onrender.com/api",
+  baseURL: "http://127.0.0.1:8000/api",
   headers: {
     "Content-Type": "application/json",
   },
@@ -118,10 +118,12 @@ export const getCategories = async () => {
 // Orders API
 export const createOrder = async (orderData) => {
   try {
+    console.log('Sending order data:', orderData); // Debug log
     const response = await api.post("/orders/", orderData);
-    return response.data;
+    console.log('Server response:', response); // Debug log
+    return response;
   } catch (error) {
-    console.error("Error creating order:", error);
+    console.error("Error creating order:", error.response || error);
     throw error;
   }
 };

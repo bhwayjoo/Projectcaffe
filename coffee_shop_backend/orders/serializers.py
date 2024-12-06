@@ -1,7 +1,8 @@
 from rest_framework import serializers
-from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem
+from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem, OrderReview
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.models import User, Group
+
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
@@ -63,7 +64,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = ['id', 'table', 'table_number', 'status', 'items', 
                  'order_items', 'total_amount', 'created_at', 'updated_at']
-        read_only_fields = ['total_amount', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'total_amount', 'created_at', 'updated_at']
 
     def validate_items(self, value):
         if not value:
@@ -84,16 +85,29 @@ class OrderSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         
-        # Create order without force_insert
+        # Create order
         order = Order.objects.create(**validated_data)
         
         # Create order items
+        order_items = []
         for item_data in items_data:
-            OrderItem.objects.create(order=order, **item_data)
+            order_items.append(OrderItem(order=order, **item_data))
+        OrderItem.objects.bulk_create(order_items)
         
         # Recalculate total
         order.save()
+        
+        # Ensure the order is refreshed from the database
+        order.refresh_from_db()
         return order
+
+    def to_representation(self, instance):
+        """
+        Override to_representation to ensure we always have an ID
+        """
+        ret = super().to_representation(instance)
+        ret['id'] = instance.id
+        return ret
 
     def update(self, instance, validated_data):
         if 'items' in validated_data:
@@ -109,6 +123,12 @@ class OrderSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+class OrderReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderReview
+        fields = ['id', 'order', 'rating', 'comment', 'created_at']
+        read_only_fields = ['created_at']
+
 class BrokenItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = BrokenItem
@@ -121,8 +141,6 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name']
-
-
 
 # Serialize the User for JWT Authentication
 class UserSerializer(serializers.ModelSerializer):

@@ -48,12 +48,9 @@ INSTALLED_APPS = [
 ]
 ASGI_APPLICATION = 'coffee_shop_backend.asgi.application'
 CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [("127.0.0.1", 6379)],
-        },
-    },
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
 }
 
 GRAPPELLI_ADMIN_TITLE = "BMMAS Admin Panel"
@@ -116,6 +113,20 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+
+CHANNEL_LAYERS_CONFIG = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {
+            "allowed_hosts": ["*"],
+        },
+    },
+}
+
 ROOT_URLCONF = 'coffee_shop_backend.urls'
 
 TEMPLATES = [
