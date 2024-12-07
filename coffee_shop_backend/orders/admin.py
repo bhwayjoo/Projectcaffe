@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem
+from .models import Category, MenuItem, Table, Order, OrderItem, BrokenItem, OrderReview
 
 
 admin.site.site_header = "My Custom Admin Panel bmmas"
@@ -43,3 +43,8 @@ class BrokenItemAdmin(admin.ModelAdmin):
     list_display = ('item_name', 'reported_by', 'resolved', 'reported_at')
     list_filter = ('resolved', 'reported_at')
     search_fields = ('item_name', 'reported_by')
+
+@admin.register(OrderReview)
+class OrderReviewAdmin(admin.ModelAdmin):
+    list_display = ('order', 'rating', 'comment', 'created_at')
+    list_filter = ('rating', 'created_at')

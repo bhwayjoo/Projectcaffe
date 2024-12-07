@@ -17,4 +17,4 @@ class ChatMessage(models.Model):
         ordering = ['timestamp']
 
     def __str__(self):
-        return f"{self.sender_type} - {self.timestamp}"
+        return f"Order: {self.order.id}, Sender: {self.sender_type}, Time: {self.timestamp}"
