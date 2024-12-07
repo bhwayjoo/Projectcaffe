@@ -88,6 +88,7 @@ const OrderTracking = () => {
   const cameraStreamRef = useRef(null);
   const hasShownToastRef = useRef(false);
   const previousStatusRef = useRef(null);
+  const [cameraError, setCameraError] = useState(null);
   const { toast } = useToast();
 
   // Fetch initial order data and connect to WebSocket for real-time updates
@@ -178,7 +179,7 @@ const OrderTracking = () => {
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       cameraStreamRef.current = stream;
-      setNfcError(null);
+      setCameraError(null);
       setShowScanner(true);
     } catch (firstError) {
       try {
@@ -186,10 +187,10 @@ const OrderTracking = () => {
           video: { facingMode: "environment" },
         });
         cameraStreamRef.current = fallbackStream;
-        setNfcError(null);
+        setCameraError(null);
         setShowScanner(true);
       } catch (error) {
-        setNfcError(
+        setCameraError(
           error.name === "NotAllowedError"
             ? "Accès à la caméra refusé. Veuillez autoriser l'accès à la caméra."
             : "Impossible d'accéder à la caméra."
@@ -208,21 +209,18 @@ const OrderTracking = () => {
       const tableNumber = result.text;
       setShowScanner(false);
       stopCamera();
-      if (!hasShownToastRef.current) {
-        toast({
-          title: "Table Scanned",
-          description: `Table numéro ${tableNumber} scannée !`,
-          variant: "default",
-        });
-        hasShownToastRef.current = true;
-      }
       handleTableUpdate(tableNumber);
+      toast({
+        title: "Success",
+        description: `Table numéro ${tableNumber} scannée !`,
+        variant: "default",
+      });
     }
   };
 
   const handleQrError = (error) => {
     if (error && error?.message !== "No QR code found") {
-      setNfcError("Erreur lors de la numérisation QR.");
+      setCameraError("Erreur lors de la numérisation QR.");
     }
   };
 
@@ -249,7 +247,7 @@ const OrderTracking = () => {
         if (mappedTable) {
           handleTableUpdate(mappedTable);
           toast({
-            title: "Table Identified",
+            title: "Success",
             description: `Table ${mappedTable} identifiée !`,
             variant: "default",
           });
@@ -274,7 +272,7 @@ const OrderTracking = () => {
       });
 
       toast({
-        title: "Scan NFC",
+        title: "Info",
         description: "Approchez votre badge NFC...",
         variant: "default",
       });
@@ -295,19 +293,15 @@ const OrderTracking = () => {
 
   const handleTableUpdate = async (tableNumber) => {
     try {
-      console.log('Updating table to:', tableNumber);
-      
       const response = await axios.post(`${API_URL}/orders/${orderId}/update_table/`, {
-        table_id: parseInt(tableNumber, 10)
+        table_id: parseInt(tableNumber, 10)  // Changed to table_id as expected by the API
       });
-      
-      console.log('Server response:', response.data);
       
       if (response.data.order) {
         setOrder(response.data.order);
         toast({
-          title: "Table Updated",
-          description: "Table mise à jour avec succès",
+          title: "Success",
+          description: `Table mise à jour : ${tableNumber}`,
           variant: "default",
         });
       }
@@ -358,22 +352,31 @@ const OrderTracking = () => {
         </div>
 
         {showScanner && (
-          <div className="relative">
-            <QrReader
-              onResult={handleQrScan}
-              onError={handleQrError}
-              constraints={{ facingMode: 'environment' }}
-              className="w-full max-w-sm mx-auto"
-            />
+          <div className="mt-4">
+            <div className="bg-black p-2 rounded-lg">
+              <QrReader
+                onResult={handleQrScan}
+                onError={handleQrError}
+                constraints={{ facingMode: 'environment' }}
+                className="w-full max-w-sm mx-auto"
+              />
+            </div>
             <Button
               onClick={() => {
                 setShowScanner(false);
                 stopCamera();
               }}
-              className="mt-2 text-red-600 hover:text-red-800"
+              variant="destructive"
+              className="w-full mt-2"
             >
-              Annuler le scan
+              Cancel Scan
             </Button>
+          </div>
+        )}
+
+        {nfcError && (
+          <div className="mt-2 p-3 bg-red-50 text-red-600 rounded-md">
+            {nfcError}
           </div>
         )}
       </div>
@@ -549,8 +552,65 @@ const OrderTracking = () => {
               <h3 className="text-lg font-semibold mb-2">Order Details</h3>
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p><strong>Status:</strong> {order.status}</p>
-                <p><strong>Table:</strong> {order.table_id || 'Not assigned'}</p>
-                <p><strong>Total:</strong> ${order.total_price}</p>
+                <p><strong>Table:</strong> {order.table || 'Not assigned'}</p>
+                <p><strong>Total:</strong> ${order.total_amount}</p>
+
+                {/* Table Change Section */}
+                <div className="mt-8">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="flex gap-4 flex-wrap justify-center">
+                      <Button
+                        onClick={startScanner}
+                        className="flex items-center gap-2"
+                      >
+                        <Camera className="w-4 h-4" />
+                        Scanner le QR code
+                      </Button>
+                      <Button
+                        onClick={startNfcScan}
+                        disabled={isNfcScanning}
+                        className="flex items-center gap-2"
+                      >
+                        <Wifi className="w-4 h-4" />
+                        {isNfcScanning ? "Lecture NFC..." : "Scanner NFC"}
+                      </Button>
+                    </div>
+
+                    {nfcError && (
+                      <Alert variant="destructive" className="mt-4">
+                        <AlertDescription>{nfcError}</AlertDescription>
+                      </Alert>
+                    )}
+                    {nfcError && (
+                      <Alert variant="destructive" className="mt-4">
+                        <AlertDescription>{nfcError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {showScanner && (
+                      <div className="relative w-full max-w-md mx-auto">
+                        <QrReader
+                          constraints={{ facingMode: "environment" }}
+                          onResult={(result, error) => {
+                            if (result) handleQrScan(result);
+                            if (error) handleQrError(error);
+                          }}
+                          className="w-full aspect-square rounded-lg overflow-hidden"
+                        />
+                        <Button
+                          onClick={() => {
+                            stopCamera();
+                            setShowScanner(false);
+                          }}
+                          variant="secondary"
+                          className="mt-4 w-full"
+                        >
+                          Annuler le scan
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
