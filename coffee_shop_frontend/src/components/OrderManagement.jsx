@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import {
   Card,
@@ -11,129 +11,210 @@ import {
   TabsContent,
 } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, MessageCircle } from "lucide-react";
 import { api } from "../api/customAcios";
 import { webSocketService } from "../services/websocket";
 import { menuWebSocketService } from '../services/menuWebSocket';
+import { chatWebSocketService } from '../services/chatWebSocket';
+import ChatModal from './ChatModal';
+import { useToast } from "./ui/use-toast";
 
 const OrderManagement = () => {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("all");
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
-
-  const { data: orders = [], isLoading, error } = useQuery(
-    "orders",
-    async () => {
-      const response = await api.get("/orders/");
-      return response.data || [];
-    },
-    {
-      retry: 3,
-      retryDelay: 1000,
-      onError: (error) => {
-        console.error("Error fetching orders:", error);
-      },
-    }
-  );
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState({});
+  const [localOrders, setLocalOrders] = useState([]);
+  const audioRef = useRef(new Audio('/notification.mp3'));
 
   useEffect(() => {
     const handleWebSocketMessage = (data) => {
+      console.log('WebSocket message received:', data);
+      
       if (data.type === 'connection_error') {
         setConnectionError(data.message);
         setIsConnected(false);
-      } else {
-        // Refresh orders when we receive updates
-        queryClient.invalidateQueries('orders');
+        return;
+      }
+      
+      setIsConnected(true);
+      setConnectionError(null);
+
+      switch (data.type) {
+        case 'initial_orders':
+          setLocalOrders(data.orders);
+          break;
+
+        case 'new_order':
+          setLocalOrders(prevOrders => {
+            const exists = prevOrders.some(order => order.id === data.order.id);
+            if (!exists) {
+              audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+              
+              toast({
+                title: "New Order",
+                description: `📝 New order #${data.order.id} received!`,
+                variant: "default",
+              });
+              return [...prevOrders, data.order];
+            }
+            return prevOrders;
+          });
+          break;
+
+        case 'order_update':
+          setLocalOrders(prevOrders => {
+            return prevOrders.map(order => {
+              if (order.id === data.order.id) {
+                if (order.status !== data.order.status) {
+                  const statusEmoji = {
+                    'pending': '⏳',
+                    'preparing': '👨‍🍳',
+                    'ready': '✅',
+                    'delivered': '🚚',
+                    'completed': '🎉',
+                    'cancelled': '❌',
+                    'paid': '💰'
+                  }[data.order.status] || '📋';
+
+                  audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+
+                  toast({
+                    title: "Order Status Updated",
+                    description: `${statusEmoji} Order #${order.id} status: ${data.order.status.toUpperCase()}`,
+                    variant: "default",
+                  });
+                }
+                return { ...order, ...data.order };
+              }
+              return order;
+            });
+          });
+          break;
+
+        case 'chat_message':
+          if (data.sender_type === 'customer') {
+            const orderId = data.order_id;
+            if (!chatOpen || selectedOrder?.id !== orderId) {
+              setUnreadMessages(prev => ({
+                ...prev,
+                [orderId]: (prev[orderId] || 0) + 1
+              }));
+              audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+              
+              toast({
+                title: "New Message",
+                description: `💬 New message from Order #${orderId}`,
+                variant: "default",
+              });
+            }
+          }
+          break;
+
+        case 'order_deleted':
+          setLocalOrders(prevOrders => {
+            return prevOrders.filter(order => order.id !== data.order_id);
+          });
+          toast({
+            title: "Order Removed",
+            description: `🗑️ Order #${data.order_id} has been removed`,
+            variant: "default",
+          });
+          break;
       }
     };
 
-    const connectWebSockets = () => {
+    const setupWebSockets = () => {
       try {
         webSocketService.connect();
-        menuWebSocketService.connect();
+        const adminUnsubscribe = webSocketService.subscribe(handleWebSocketMessage);
 
-        const adminUnsubscribe = webSocketService.subscribe((data) => {
-          handleWebSocketMessage(data);
-          setIsConnected(true);
-          setConnectionError(null);
-        });
-
-        const menuUnsubscribe = menuWebSocketService.subscribe((data) => {
-          handleWebSocketMessage(data);
-          setIsConnected(true);
-          setConnectionError(null);
-        });
+        setIsConnected(true);
+        setConnectionError(null);
 
         return () => {
           adminUnsubscribe();
-          menuUnsubscribe();
           webSocketService.disconnect();
-          menuWebSocketService.disconnect();
         };
       } catch (error) {
-        console.error('Error setting up WebSocket connections:', error);
+        console.error('WebSocket connection error:', error);
         setConnectionError('Failed to connect to order system');
         setIsConnected(false);
+        return () => {};
       }
     };
 
-    const cleanup = connectWebSockets();
-    return () => cleanup && cleanup();
-  }, [queryClient]);
+    const cleanup = setupWebSockets();
+    return () => cleanup();
+  }, [chatOpen, selectedOrder, toast]);
 
-  const handleWebSocketMessage = (data, source) => {
-    if (data.type === 'initial_orders') {
-      queryClient.setQueryData('orders', data.orders);
-    } else if (data.type === 'new_order') {
-      queryClient.setQueryData('orders', (oldOrders) => {
-        if (!oldOrders) return [data.order];
-        return [data.order, ...oldOrders];
-      });
-    } else if (data.type === 'order_update') {
-      queryClient.setQueryData('orders', (oldOrders) => {
-        if (!oldOrders) return oldOrders;
-        return oldOrders.map(order => 
-          order.id === data.order.id ? data.order : order
-        );
-      });
-    } else if (data.type === 'order_update') {
-      // Update existing order
-      queryClient.setQueryData("orders", (oldOrders) => {
-        if (!oldOrders) return oldOrders;
-        return oldOrders.map(order => 
-          order.id === data.order.id ? data.order : order
-        );
-      });
-    } else if (data.type === 'new_order') {
-      // Add new order to the list
-      queryClient.setQueryData("orders", (oldOrders) => {
-        if (!oldOrders) return [data.order];
-        return [data.order, ...oldOrders];
-      });
-      // Show notification for new order
-      // You can add a toast notification here if needed
-    } else if (data.type === 'connection_error') {
-      console.error('WebSocket connection error:', data.message);
+  useEffect(() => {
+    let reconnectTimeout;
+
+    const handleReconnect = () => {
+      if (!isConnected) {
+        console.log('Attempting to reconnect...');
+        webSocketService.connect();
+      }
+    };
+
+    if (!isConnected) {
+      reconnectTimeout = setTimeout(handleReconnect, 5000);
     }
+
+    return () => {
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+    };
+  }, [isConnected]);
+
+  const handleChatOpen = (order) => {
+    setSelectedOrder(order);
+    setChatOpen(true);
+    // Clear unread count for this order
+    setUnreadMessages(prev => ({
+      ...prev,
+      [order.id]: 0
+    }));
+  };
+
+  const handleChatClose = () => {
+    setChatOpen(false);
+    setSelectedOrder(null);
   };
 
   const updateOrderStatus = useMutation(
     async ({ orderId, status }) => {
       try {
-        webSocketService.updateOrderStatus(orderId, status);
-        const response = await api.post(`/orders/${orderId}/update_status/`, { status });
-        return response.data;
+        webSocketService.sendMessage({
+          type: 'order_update',
+          order: {
+            id: orderId,
+            status: status
+          }
+        });
       } catch (error) {
         console.error('Error updating order status:', error);
-        throw error;
+        toast({
+          title: "Error",
+          description: "Failed to update order status",
+          variant: "destructive",
+        });
       }
     },
     {
-      onSuccess: () => queryClient.invalidateQueries("orders"),
-      onError: (error) => {
-        console.error('Mutation error:', error);
-      },
+      onSuccess: (data) => {
+        toast({
+          title: "Status Updated",
+          description: `Order #${data.id} status updated to ${data.status}`,
+          variant: "default",
+        });
+      }
     }
   );
 
@@ -183,20 +264,28 @@ const OrderManagement = () => {
   };
 
   const ordersByStatus = {
-    all: orders,
-    pending: orders.filter((order) => order?.status === "pending"),
-    confirmed: orders.filter((order) => order?.status === "confirmed"),
-    preparing: orders.filter((order) => order?.status === "preparing"),
-    ready: orders.filter((order) => order?.status === "ready"),
-    delivered: orders.filter((order) => order?.status === "delivered"),
-    paid: orders.filter((order) => order?.status === "paid"),
-    cancelled: orders.filter((order) => order?.status === "cancelled"),
+    all: [...localOrders].sort((a, b) => a.id - b.id),
+    pending: localOrders.filter((order) => order?.status === "pending")
+      .sort((a, b) => a.id - b.id),
+    confirmed: localOrders.filter((order) => order?.status === "confirmed")
+      .sort((a, b) => a.id - b.id),
+    preparing: localOrders.filter((order) => order?.status === "preparing")
+      .sort((a, b) => a.id - b.id),
+    ready: localOrders.filter((order) => order?.status === "ready")
+      .sort((a, b) => a.id - b.id),
+    delivered: localOrders.filter((order) => order?.status === "delivered")
+      .sort((a, b) => a.id - b.id),
+    paid: localOrders.filter((order) => order?.status === "paid")
+      .sort((a, b) => a.id - b.id),
+    cancelled: localOrders.filter((order) => order?.status === "cancelled")
+      .sort((a, b) => a.id - b.id),
   };
 
   const OrderCard = ({ order }) => {
     if (!order) return null;
     
     const nextStatus = getNextStatus(order.status);
+    const unreadCount = unreadMessages[order.id] || 0;
 
     return (
       <Card className="p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
@@ -227,6 +316,21 @@ const OrderManagement = () => {
               >
                 {order.status.toUpperCase()}
               </span>
+              <div className="relative inline-block">
+                <Button 
+                  onClick={() => handleChatOpen(order)}
+                  className="bg-gray-500 hover:bg-gray-600 text-white"
+                  size="sm"
+                >
+                  <MessageCircle className="h-4 w-4 mr-1" />
+                  Chat
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1">
+                      {unreadCount}
+                    </span>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -249,8 +353,8 @@ const OrderManagement = () => {
                       </p>
                       {item.notes && (
                         <p className="text-sm text-gray-500">
-                        Notes: {item.notes}
-                      </p>
+                          Notes: {item.notes}
+                        </p>
                       )}
                     </div>
                     <div className="text-right">
@@ -304,7 +408,7 @@ const OrderManagement = () => {
     );
   };
 
-  if (isLoading) {
+  if (localOrders.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -312,15 +416,7 @@ const OrderManagement = () => {
     );
   }
 
-  if (error) {
-    return (
-      <div className="p-4 text-red-500">
-        Error loading orders: {error.message}
-      </div>
-    );
-  }
-
-  if (!isConnected && connectionError) {
+  if (connectionError) {
     return (
       <div className="p-4 text-amber-500">
         {connectionError}. Attempting to reconnect...
@@ -375,6 +471,15 @@ const OrderManagement = () => {
           </TabsContent>
         ))}
       </Tabs>
+
+      {/* Chat Modal */}
+      {selectedOrder && (
+        <ChatModal
+          orderId={selectedOrder.id}
+          isOpen={chatOpen}
+          onClose={handleChatClose}
+        />
+      )}
     </div>
   );
 };

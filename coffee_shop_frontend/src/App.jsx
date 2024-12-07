@@ -9,6 +9,7 @@ import Test from "./pages/test";
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import OrderTracking from "./components/OrderTracking";
+import { Toaster } from "./components/ui/toaster";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,33 +21,36 @@ const queryClient = new QueryClient({
   },
 });
 
-const App = () => {
+function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <Router>
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/" element={<MenuPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/test" element={<Test />} />
-          <Route path="/track-order/:orderId" element={<OrderTracking />} />
+    <>
+      <QueryClientProvider client={queryClient}>
+        <Router>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<MenuPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/test" element={<Test />} />
+            <Route path="/track-order/:orderId" element={<OrderTracking />} />
 
-          {/* Protected Routes */}
-          <Route
-            path="/admin/*"
-            element={
-              <ProtectedRoute>
-                <AdminPage />
-              </ProtectedRoute>
-            }
-          />
+            {/* Protected Routes */}
+            <Route
+              path="/admin/*"
+              element={
+                <ProtectedRoute>
+                  <AdminPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Fallback Route */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-        <ToastContainer position="bottom-right" />
-      </Router>
-    </QueryClientProvider>
+            {/* Fallback Route */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+          <ToastContainer position="bottom-right" />
+        </Router>
+      </QueryClientProvider>
+      <Toaster />
+    </>
   );
 };
 

@@ -1,35 +1,65 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useParams } from 'react-router-dom';
-import { toast } from 'react-toastify';
+import { useToast } from "./ui/use-toast";
 import { QrReader } from 'react-qr-reader';
-import { Camera, Wifi } from "lucide-react";
+import { Camera, Wifi, Star, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+
+const API_URL = 'http://127.0.0.1:8000/api';
+const WS_URL = 'ws://127.0.0.1:8000/ws';
 
 const NFC_TABLE_MAPPING = {
   "43:66:75:f3": "1",
   "e3:18:4f:f3": "2",
   "d6:7f:94:0e": "3",
-  "30:e7:21:01": "4",
+  "30:e7:21:01": "4"
+};
+
+const ORDER_STATUS_STEPS = {
+  'pending': 0,
+  'confirmed': 25,
+  'preparing': 50,
+  'ready': 75,
+  'delivered': 100
+};
+
+// Helper functions moved outside components
+const getStatusColor = (status) => {
+  if (!status) return 'bg-gray-100 text-gray-800 border-gray-300';
+  
+  const colors = {
+    pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+    confirmed: 'bg-blue-100 text-blue-800 border-blue-300',
+    preparing: 'bg-purple-100 text-purple-800 border-purple-300',
+    ready: 'bg-green-100 text-green-800 border-green-300',
+    delivered: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+    cancelled: 'bg-red-100 text-red-800 border-red-300',
+  };
+  return colors[status.toLowerCase()] || 'bg-gray-100 text-gray-800 border-gray-300';
+};
+
+const getStatusEmoji = (status) => {
+  if (!status) return '❓';
+  
+  const emojis = {
+    pending: '⏳',
+    confirmed: '✅',
+    preparing: '👨‍🍳',
+    ready: '🍽️',
+    delivered: '🎉',
+    cancelled: '❌',
+  };
+  return emojis[status.toLowerCase()] || '❓';
 };
 
 const OrderStatusBadge = ({ status }) => {
-  const getStatusColor = (status) => {
-    if (!status) return 'bg-gray-100 text-gray-800 border-gray-300';
-    
-    const colors = {
-      pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-      preparing: 'bg-blue-100 text-blue-800 border-blue-300',
-      ready: 'bg-green-100 text-green-800 border-green-300',
-      delivered: 'bg-purple-100 text-purple-800 border-purple-300',
-      cancelled: 'bg-red-100 text-red-800 border-red-300',
-    };
-    return colors[status.toLowerCase()] || 'bg-gray-100 text-gray-800 border-gray-300';
-  };
-
   return (
-    <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(status)}`}>
-      {status ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase() : 'Unknown'}
+    <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(status)} flex items-center gap-2`}>
+      <span>{getStatusEmoji(status)}</span>
+      <span>{status ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase() : 'Unknown'}</span>
     </span>
   );
 };
@@ -41,11 +71,30 @@ const OrderTracking = () => {
   const [error, setError] = useState(null);
   const [ws, setWs] = useState(null);
   const [showScanner, setShowScanner] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
   const [isNfcScanning, setIsNfcScanning] = useState(false);
   const [nfcError, setNfcError] = useState(null);
+  const [review, setReview] = useState({ rating: 5, comment: '' });
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const cameraStreamRef = useRef(null);
+  const chatRef = useRef(null);
   const hasShownToastRef = useRef(false);
+  const previousStatusRef = useRef(null);
+  const { toast } = useToast();
+
+  // Effect for handling order status changes
+  useEffect(() => {
+    if (order?.status && previousStatusRef.current !== order.status) {
+      const emoji = getStatusEmoji(order.status);
+      toast({
+        title: "Order Updated",
+        description: `${emoji} Status: ${order.status}`,
+        variant: "default",
+      });
+      previousStatusRef.current = order.status;
+    }
+  }, [order?.status, toast]);
 
   const stopCamera = () => {
     if (cameraStreamRef.current) {
@@ -66,7 +115,7 @@ const OrderTracking = () => {
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       cameraStreamRef.current = stream;
-      setCameraError(null);
+      setNfcError(null);
       setShowScanner(true);
     } catch (firstError) {
       try {
@@ -74,15 +123,19 @@ const OrderTracking = () => {
           video: { facingMode: "environment" },
         });
         cameraStreamRef.current = fallbackStream;
-        setCameraError(null);
+        setNfcError(null);
         setShowScanner(true);
       } catch (error) {
-        setCameraError(
+        setNfcError(
           error.name === "NotAllowedError"
             ? "Accès à la caméra refusé. Veuillez autoriser l'accès à la caméra."
             : "Impossible d'accéder à la caméra."
         );
-        toast.error("Accès à la caméra requis pour la numérisation QR");
+        toast({
+          title: "Error",
+          description: "Accès à la caméra requis pour la numérisation QR",
+          variant: "destructive",
+        });
       }
     }
   };
@@ -93,7 +146,11 @@ const OrderTracking = () => {
       setShowScanner(false);
       stopCamera();
       if (!hasShownToastRef.current) {
-        toast.success(`Table numéro ${tableNumber} scannée !`);
+        toast({
+          title: "Table Scanned",
+          description: `Table numéro ${tableNumber} scannée !`,
+          variant: "default",
+        });
         hasShownToastRef.current = true;
       }
       handleTableUpdate(tableNumber);
@@ -102,14 +159,18 @@ const OrderTracking = () => {
 
   const handleQrError = (error) => {
     if (error && error?.message !== "No QR code found") {
-      setCameraError("Erreur lors de la numérisation QR.");
+      setNfcError("Erreur lors de la numérisation QR.");
     }
   };
 
   const startNfcScan = async () => {
     if (!("NDEFReader" in window)) {
       setNfcError("NFC n'est pas supporté sur cet appareil");
-      toast.error("NFC non supporté");
+      toast({
+        title: "Error",
+        description: "NFC non supporté",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -124,9 +185,17 @@ const OrderTracking = () => {
         const mappedTable = NFC_TABLE_MAPPING[serialNumber];
         if (mappedTable) {
           handleTableUpdate(mappedTable);
-          toast.success(`Table ${mappedTable} identifiée !`);
+          toast({
+            title: "Table Identified",
+            description: `Table ${mappedTable} identifiée !`,
+            variant: "default",
+          });
         } else {
-          toast.error("Badge non reconnu");
+          toast({
+            title: "Error",
+            description: "Badge non reconnu",
+            variant: "destructive",
+          });
         }
         setIsNfcScanning(false);
       });
@@ -134,10 +203,18 @@ const OrderTracking = () => {
       ndef.addEventListener("error", () => {
         setNfcError("Erreur lors de la lecture NFC");
         setIsNfcScanning(false);
-        toast.error("Erreur de lecture NFC");
+        toast({
+          title: "Error",
+          description: "Erreur de lecture NFC",
+          variant: "destructive",
+        });
       });
 
-      toast.success("Approchez votre badge NFC...");
+      toast({
+        title: "Scan NFC",
+        description: "Approchez votre badge NFC...",
+        variant: "default",
+      });
     } catch (error) {
       setNfcError(
         error.name === "NotAllowedError"
@@ -145,16 +222,19 @@ const OrderTracking = () => {
           : "Erreur lors de l'initialisation NFC"
       );
       setIsNfcScanning(false);
-      toast.error("Erreur NFC");
+      toast({
+        title: "Error",
+        description: "Erreur NFC",
+        variant: "destructive",
+      });
     }
   };
 
-  // Function to update table
   const handleTableUpdate = async (tableNumber) => {
     try {
       console.log('Updating table to:', tableNumber);
       
-      const response = await axios.post(`http://127.0.0.1:8000/api/orders/${orderId}/update_table/`, {
+      const response = await axios.post(`${API_URL}/orders/${orderId}/update_table/`, {
         table_id: parseInt(tableNumber, 10)
       });
       
@@ -162,27 +242,28 @@ const OrderTracking = () => {
       
       if (response.data.order) {
         setOrder(response.data.order);
-        toast.success('Table mise à jour avec succès');
+        toast({
+          title: "Table Updated",
+          description: "Table mise à jour avec succès",
+          variant: "default",
+        });
       }
     } catch (error) {
       console.error('Error updating table:', error);
       const errorMessage = error.response?.data?.error || 'Échec de la mise à jour de la table';
-      toast.error(errorMessage);
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
     }
   };
 
-  // Render table selection UI
   const renderTableSelection = () => {
     return (
       <div className="mt-4 space-y-4">
         <h3 className="text-lg font-semibold">Changer de Table</h3>
         
-        {cameraError && (
-          <div className="bg-red-50 text-red-600 p-3 rounded-md">
-            {cameraError}
-          </div>
-        )}
-
         {nfcError && (
           <div className="bg-red-50 text-red-600 p-3 rounded-md">
             {nfcError}
@@ -232,218 +313,424 @@ const OrderTracking = () => {
     );
   };
 
-  useEffect(() => {
-    const fetchOrder = async () => {
-      try {
-        const response = await axios.get(`http://127.0.0.1:8000/api/orders/${orderId}/track/`);
-        console.log('Order data received:', response.data);
-        setOrder(response.data);
-      } catch (error) {
-        console.error('Error fetching order:', error);
-        setError('Failed to load order details');
-        toast.error('Failed to load order details');
-      } finally {
-        setLoading(false);
+  const handleReviewSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (!order || order.status !== 'delivered') {
+        toast({
+          title: "Error",
+          description: "Can only review delivered orders",
+          variant: "destructive",
+        });
+        return;
       }
-    };
-    fetchOrder();
 
-    const wsUrl = `ws://127.0.0.1:8000/ws/order/${orderId}/`;
-    console.log('Connecting to WebSocket:', wsUrl);
-    const socket = new WebSocket(wsUrl);
-    
-    socket.onopen = () => {
-      console.log('WebSocket connected successfully');
-    };
+      if (order.review) {
+        toast({
+          title: "Error",
+          description: "Order already has a review",
+          variant: "destructive",
+        });
+        return;
+      }
 
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message received:', data);
-        
-        if (data.type === 'order_update' && data.order) {
-          setOrder(currentOrder => {
-            // Only show toast if status has changed
-            if (currentOrder && currentOrder.status !== data.order.status) {
-              toast.info(`Order status updated to: ${data.order.status}`);
-            }
-            return data.order;
+      const response = await axios.post(`${API_URL}/orders/${orderId}/review/`, {
+        rating: parseInt(review.rating),
+        comment: review.comment || ''
+      });
+
+      toast({
+        title: "Review Submitted",
+        description: "Review submitted successfully!",
+        variant: "default",
+      });
+      setReview({ rating: 5, comment: '' });
+      
+      setOrder(prevOrder => ({
+        ...prevOrder,
+        review: response.data
+      }));
+    } catch (error) {
+      console.error('Error submitting review:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to submit review';
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const StarRating = () => {
+    return (
+      <div className="flex items-center space-x-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={() => setReview({ ...review, rating: star })}
+            className={`focus:outline-none ${
+              star <= review.rating ? 'text-yellow-400' : 'text-gray-300'
+            }`}
+          >
+            <Star
+              className={`w-6 h-6 ${
+                star <= review.rating ? 'fill-yellow-400' : 'fill-none'
+              }`}
+            />
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderReviewForm = () => {
+    if (!order || order.status !== 'delivered' || order.review) return null;
+
+    return (
+      <div className="mt-6 p-4 bg-white rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">Leave a Review</h3>
+        <form onSubmit={handleReviewSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Rating
+            </label>
+            <StarRating />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Comment
+            </label>
+            <textarea
+              value={review.comment}
+              onChange={(e) => setReview({ ...review, comment: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              rows="3"
+              placeholder="Share your experience..."
+            />
+          </div>
+          <Button
+            type="submit"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            Submit Review
+          </Button>
+        </form>
+      </div>
+    );
+  };
+
+  // Handle incoming WebSocket messages
+  const handleWebSocketMessage = (data) => {
+    try {
+      const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+      
+      if (parsedData.type === 'order_update') {
+        setOrder(parsedData.order);
+      } else if (parsedData.type === 'chat_message') {
+        // Add message to the chat
+        setMessages(prev => [...prev, {
+          text: parsedData.message,
+          sender: parsedData.sender_type,
+          timestamp: parsedData.timestamp || new Date().toISOString()
+        }]);
+
+        // Only show toast for staff messages
+        if (parsedData.sender_type === 'staff') {
+          toast({
+            title: "New Message",
+            description: `Staff: ${parsedData.message}`,
+            variant: "default",
           });
         }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
       }
+    } catch (error) {
+      console.error('Error processing WebSocket message:', error);
+    }
+  };
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !ws || ws.readyState !== WebSocket.OPEN || isSending) return;
+
+    try {
+      setIsSending(true);
+      const messageData = {
+        type: 'chat_message',
+        message: newMessage.trim(),
+        sender_type: 'customer',
+        timestamp: new Date().toISOString()
+      };
+
+      // Only send to server and wait for echo
+      ws.send(JSON.stringify(messageData));
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // WebSocket connection setup
+  useEffect(() => {
+    let socket = null;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_TIMEOUT = 2000;
+
+    const connectWebSocket = () => {
+      const wsUrl = `${WS_URL}/order/${orderId}/`;
+      console.log('Connecting to WebSocket:', wsUrl);
+      socket = new WebSocket(wsUrl);
+      setWs(socket);
+
+      socket.onopen = () => {
+        console.log('WebSocket connected successfully');
+        setError(null);
+        reconnectAttempts = 0;
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleWebSocketMessage(data);
+        } catch (error) {
+          console.error('Error processing WebSocket message:', error);
+        }
+      };
+
+      socket.onclose = (event) => {
+        console.log('WebSocket connection closed:', event);
+        if (!event.wasClean && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          setError(`Lost connection to server. Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+          toast({
+            title: "Connection Lost",
+            description: "Attempting to reconnect...",
+            variant: "destructive",
+          });
+          reconnectTimer = setTimeout(connectWebSocket, RECONNECT_TIMEOUT * reconnectAttempts);
+        } else {
+          setError('Connection closed. Please refresh the page.');
+          toast({
+            title: "Connection Closed",
+            description: "Please refresh the page to reconnect.",
+            variant: "destructive",
+          });
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setError('WebSocket connection error');
+      };
     };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      toast.error('Connection error. Status updates may be delayed.');
-    };
-
-    socket.onclose = (event) => {
-      console.log('WebSocket connection closed:', event);
-      if (!event.wasClean) {
-        toast.warning('Lost connection to server. Refresh to reconnect.');
-      }
-    };
-
-    setWs(socket);
+    connectWebSocket();
 
     return () => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (socket) {
         socket.close();
       }
     };
   }, [orderId]);
 
-  const updateOrderStatus = async (newStatus) => {
-    try {
-      await axios.post(`http://127.0.0.1:8000/api/orders/${orderId}/update_status/`, {
-        status: newStatus
-      });
-      toast.success('Order status updated successfully');
-    } catch (error) {
-      console.error('Error updating order status:', error);
-      toast.error('Failed to update order status');
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (chatRef.current) {
+      chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }
-  };
+  }, [messages]);
 
-  const handleCancel = async () => {
-    try {
-      await axios.post(`http://127.0.0.1:8000/api/orders/${orderId}/cancel/`);
-      toast.success('Order cancelled successfully');
-    } catch (error) {
-      console.error('Error cancelling order:', error);
-      toast.error('Failed to cancel order');
-    }
-  };
+  useEffect(() => {
+    const fetchOrder = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/orders/${orderId}/track/`);
+        console.log('Order data received:', response.data);
+        setOrder(response.data);
+      } catch (error) {
+        console.error('Error fetching order:', error);
+        setError('Failed to load order details');
+        toast({
+          title: "Error",
+          description: "Failed to load order details",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const handleReviewSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post(`http://127.0.0.1:8000/api/orders/${orderId}/review/`, review);
-      toast.success('Review submitted successfully!');
-      setReview({ rating: 5, comment: '' }); // Reset form
-    } catch (error) {
-      console.error('Error submitting review:', error);
-      toast.error('Failed to submit review');
-    }
-  };
+    fetchOrder();
+
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, [orderId, toast]);
 
   if (loading) {
     return (
-      <div className="max-w-lg mx-auto p-4">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-3/4 mb-4"></div>
-          <div className="h-40 bg-gray-200 rounded mb-4"></div>
-        </div>
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading order details...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="max-w-lg mx-auto p-4">
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
+      <div className="bg-red-50 text-red-600 p-6 rounded-lg">
+        <p className="text-lg font-medium">{error}</p>
+        <p className="mt-2">Please try refreshing the page.</p>
       </div>
     );
   }
 
   if (!order) {
     return (
-      <div className="max-w-lg mx-auto p-4">
-        <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded">
-          Order not found
-        </div>
+      <div className="text-center text-gray-600">
+        <p className="text-lg">Order not found</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-lg mx-auto p-4">
+    <div className="container mx-auto px-4 py-8">
       <div className="bg-white shadow-lg rounded-lg overflow-hidden">
         <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold">Order #{orderId}</h2>
-            <OrderStatusBadge status={order.status} />
-          </div>
-
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold mb-2">Items</h3>
-            <div className="space-y-2">
-              {Array.isArray(order.order_items) && order.order_items.length > 0 ? (
-                order.order_items.map((item, index) => (
-                  <div key={index} className="flex justify-between items-center py-2 border-b">
-                    <div>
-                      <p className="font-medium">{item.menu_item_name || 'Unknown Item'}</p>
-                      <p className="text-sm text-gray-600">Quantity: {item.quantity || 0}</p>
-                    </div>
-                    <p className="font-medium">
-                      ${((parseFloat(item.menu_item_price) || 0) * (item.quantity || 0)).toFixed(2)}
-                    </p>
-                  </div>
-                ))
-              ) : (
-                <p className="text-gray-500">No items in this order</p>
-              )}
+          <div className="flex flex-col gap-4 mb-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Order #{orderId}</h2>
+              <OrderStatusBadge status={order.status} />
             </div>
+            
+            <Progress
+              value={ORDER_STATUS_STEPS[order.status] || 0}
+              className="w-full"
+            />
+
+            {renderTableSelection()}
+            {renderReviewForm()}
           </div>
-
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold mb-2">Order Details</h3>
-            <p className="text-gray-600">Table #{order.table_number || 'N/A'}</p>
-            <p className="text-gray-600">
-              Total: ${parseFloat(order.total_amount || 0).toFixed(2)}
-            </p>
-          </div>
-
-          {order.status === 'pending' && (
-            <button
-              onClick={handleCancel}
-              className="w-full bg-red-600 text-white py-2 px-4 rounded hover:bg-red-700 transition-colors"
-            >
-              Cancel Order
-            </button>
-          )}
-
-          {renderTableSelection()}
-
-          {order.status === 'delivered' && !order.review && (
-            <form onSubmit={handleReviewSubmit} className="mt-6">
-              <h3 className="text-lg font-semibold mb-4">Leave a Review</h3>
-              <div className="mb-4">
-                <label className="block text-gray-700 mb-2">Rating</label>
-                <select
-                  value={review.rating}
-                  onChange={(e) => setReview({ ...review, rating: parseInt(e.target.value) })}
-                  className="w-full border rounded p-2"
-                >
-                  {[5, 4, 3, 2, 1].map((num) => (
-                    <option key={num} value={num}>{num} Stars</option>
-                  ))}
-                </select>
+        </div>
+      </div>
+      
+      {/* Chat Section */}
+      <div className="mt-8 bg-white rounded-lg shadow-lg">
+        <div className="border-b p-4 bg-gray-50">
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <span>Chat with Staff</span>
+            {ws?.readyState === WebSocket.OPEN && (
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 bg-green-500 rounded-full" />
+                <span className="text-sm text-gray-600 font-normal">Connected</span>
               </div>
-              <div className="mb-4">
-                <label className="block text-gray-700 mb-2">Comment</label>
-                <textarea
-                  value={review.comment}
-                  onChange={(e) => setReview({ ...review, comment: e.target.value })}
-                  className="w-full border rounded p-2"
-                  rows="4"
-                  placeholder="Tell us about your experience..."
-                ></textarea>
+            )}
+            {ws?.readyState !== WebSocket.OPEN && (
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 bg-red-500 rounded-full" />
+                <span className="text-sm text-gray-600 font-normal">Disconnected</span>
               </div>
-              <button
-                type="submit"
-                className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition-colors"
+            )}
+          </h2>
+        </div>
+        
+        <div 
+          ref={chatRef}
+          className="h-[400px] p-4 overflow-y-auto space-y-3 bg-gray-50"
+        >
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <p className="text-center">
+                No messages yet. Start the conversation!
+              </p>
+            </div>
+          ) : (
+            messages.map((msg, index) => (
+              <div
+                key={index}
+                className={`flex ${
+                  msg.sender === 'customer' ? 'justify-end' : 'justify-start'
+                } items-end space-x-2 mb-3`}
               >
-                Submit Review
-              </button>
-            </form>
+                {msg.sender !== 'customer' && (
+                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
+                    <span className="text-white text-sm font-semibold">S</span>
+                  </div>
+                )}
+                <div
+                  className={`relative max-w-[70%] break-words p-3 rounded-lg ${
+                    msg.sender === 'customer'
+                      ? 'bg-blue-500 text-white rounded-br-none'
+                      : 'bg-green-600 text-white rounded-bl-none'
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap text-sm">{msg.text}</p>
+                  <span className={`text-xs mt-1 block ${
+                    msg.sender === 'customer' ? 'text-blue-100' : 'text-white opacity-75'
+                  }`}>
+                    {new Date(msg.timestamp).toLocaleTimeString([], { 
+                      hour: '2-digit', 
+                      minute: '2-digit'
+                    })}
+                  </span>
+                </div>
+                {msg.sender === 'customer' && (
+                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
+                    <span className="text-white text-sm font-semibold">Y</span>
+                  </div>
+                )}
+              </div>
+            ))
           )}
         </div>
+
+        <form onSubmit={sendMessage} className="p-4 border-t">
+          <div className="flex gap-2">
+            <Input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 bg-gray-50 focus:bg-white transition-colors"
+              disabled={!ws || ws.readyState !== WebSocket.OPEN}
+            />
+            <Button 
+              type="submit" 
+              disabled={!ws || ws.readyState !== WebSocket.OPEN || !newMessage.trim() || isSending}
+              className="bg-blue-500 hover:bg-blue-600 text-white disabled:bg-gray-300"
+            >
+              {isSending ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>Sending...</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                  <span>Send</span>
+                </div>
+              )}
+            </Button>
+          </div>
+        </form>
       </div>
     </div>
   );
