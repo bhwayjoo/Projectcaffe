@@ -1,12 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
 import { useParams } from 'react-router-dom';
-import { useToast } from "./ui/use-toast";
-import { QrReader } from 'react-qr-reader';
-import { Camera, Wifi, Star, RotateCw } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
+import { 
+  Loader2, 
+  MessageCircle, 
+  Send, 
+  QrCode, 
+  Smartphone,
+  Star 
+} from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { chatWebSocketService } from '@/services/chatWebSocket';
+import { ChatModal } from './ui/chat-modal';
+import axios from 'axios';
+import { QrReader } from 'react-qr-reader';
+import { Camera, Wifi, RotateCw } from "lucide-react";
 
 const API_URL = 'http://127.0.0.1:8000/api';
 const WS_URL = 'ws://127.0.0.1:8000/ws';
@@ -69,37 +80,28 @@ const OrderTracking = () => {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [ws, setWs] = useState(null);
   const [showScanner, setShowScanner] = useState(false);
   const [isNfcScanning, setIsNfcScanning] = useState(false);
   const [nfcError, setNfcError] = useState(null);
   const [review, setReview] = useState({ rating: 5, comment: '' });
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [isSending, setIsSending] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const cameraStreamRef = useRef(null);
-  const chatRef = useRef(null);
   const hasShownToastRef = useRef(false);
   const previousStatusRef = useRef(null);
   const { toast } = useToast();
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
 
   // Fetch initial order data
   useEffect(() => {
     const fetchOrder = async () => {
       try {
+        setLoading(true);
         const response = await axios.get(`${API_URL}/orders/${orderId}/`);
         setOrder(response.data);
         previousStatusRef.current = response.data.status;
+        setError(null);
       } catch (err) {
         console.error('Error fetching order:', err);
-        setError('Unable to find order. Please check your order number.');
-        toast({
-          title: "Error",
-          description: "Unable to find order. Please check your order number.",
-          variant: "destructive",
-        });
+        setError('Failed to load order details. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -107,111 +109,6 @@ const OrderTracking = () => {
 
     fetchOrder();
   }, [orderId, toast]);
-
-  // Handle WebSocket connection and messages
-  useEffect(() => {
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_DELAY = 3000;
-    let reconnectAttempts = 0;
-
-    const connect = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        return;
-      }
-
-      const wsUrl = `${WS_URL}/order/${orderId}/`;
-      console.log('Connecting to WebSocket:', wsUrl);
-      
-      const socket = new WebSocket(wsUrl);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        console.log('WebSocket connected successfully');
-        setError(null);
-        reconnectAttempts = 0;
-        
-        // Request initial status
-        socket.send(JSON.stringify({ type: 'get_status' }));
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('Received WebSocket message:', data);
-          
-          if (data.type === 'order_update') {
-            setOrder(data.order);
-            if (data.order.status !== previousStatusRef.current) {
-              previousStatusRef.current = data.order.status;
-              if (!hasShownToastRef.current) {
-                toast({
-                  title: "Order Status Updated",
-                  description: `Your order status is now: ${data.order.status}`,
-                });
-                hasShownToastRef.current = true;
-                setTimeout(() => {
-                  hasShownToastRef.current = false;
-                }, 5000);
-              }
-            }
-          }
-        } catch (err) {
-          console.error('Error processing WebSocket message:', err);
-        }
-      };
-
-      socket.onclose = (event) => {
-        console.log('WebSocket closed:', event);
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          console.log(`Reconnecting... Attempt ${reconnectAttempts}`);
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
-          }, RECONNECT_DELAY);
-        } else {
-          setError('Connection lost. Please refresh the page to reconnect.');
-          toast({
-            title: "Connection Lost",
-            description: "Please refresh the page to reconnect",
-            variant: "destructive",
-          });
-        }
-      };
-
-      socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('Connection error. Please check your internet connection.');
-      };
-
-      setWs(socket);
-    };
-
-    connect();
-
-    // Ping the server every 30 seconds to keep the connection alive
-    const pingInterval = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'get_status' }));
-      }
-    }, 30000);
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      clearInterval(pingInterval);
-    };
-  }, [orderId, toast]);
-
-  // Handle order status changes
-  useEffect(() => {
-    if (order?.status && previousStatusRef.current !== order.status) {
-      previousStatusRef.current = order.status;
-    }
-  }, [order?.status]);
 
   const stopCamera = () => {
     if (cameraStreamRef.current) {
@@ -377,6 +274,10 @@ const OrderTracking = () => {
   };
 
   const renderTableSelection = () => {
+    if (!order || order.status !== 'confirmed' || order.table_id) {
+      return null;
+    }
+
     return (
       <div className="mt-4 space-y-4">
         <h3 className="text-lg font-semibold">Changer de Table</h3>
@@ -502,7 +403,9 @@ const OrderTracking = () => {
   };
 
   const renderReviewForm = () => {
-    if (!order || order.status !== 'delivered' || order.review) return null;
+    if (!order || order.status !== 'delivered' || order.review) {
+      return null;
+    }
 
     return (
       <div className="mt-6 p-4 bg-white rounded-lg shadow">
@@ -518,7 +421,7 @@ const OrderTracking = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Comment
             </label>
-            <textarea
+            <Textarea
               value={review.comment}
               onChange={(e) => setReview({ ...review, comment: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
@@ -537,121 +440,35 @@ const OrderTracking = () => {
     );
   };
 
-  const handleWebSocketMessage = (data) => {
-    try {
-      const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
-      console.log('Parsed WebSocket message:', parsedData);
-
-      switch (parsedData.type) {
-        case 'order_data':
-        case 'order_update':
-          if (parsedData.order) {
-            setOrder(prevOrder => {
-              // Only update and show toast if status has changed
-              if (prevOrder?.status !== parsedData.order.status) {
-                const emoji = getStatusEmoji(parsedData.order.status);
-                toast({
-                  title: "Order Status Updated",
-                  description: `${emoji} Status: ${parsedData.order.status.toUpperCase()}`,
-                  variant: "default",
-                });
-              }
-              return parsedData.order;
-            });
-          }
-          break;
-
-        case 'chat_message':
-          if (parsedData.message) {
-            setMessages(prev => [...prev, {
-              message: parsedData.message,
-              sender_type: parsedData.sender_type,
-              timestamp: parsedData.timestamp
-            }]);
-
-            // Play notification sound for customer messages
-            if (parsedData.sender_type === 'staff') {
-              const audio = new Audio('/notification.mp3');
-              audio.play().catch(e => console.log('Audio play failed:', e));
-            }
-          }
-          break;
-
-        case 'error':
-          console.error('WebSocket error message:', parsedData.message);
-          setError(parsedData.message);
-          toast({
-            title: "Error",
-            description: parsedData.message,
-            variant: "destructive",
-          });
-          break;
-
-        default:
-          console.log('Unknown message type:', parsedData.type);
-      }
-    } catch (error) {
-      console.error('Error handling WebSocket message:', error);
-    }
-  };
-
-  const sendMessage = async (e) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !ws || ws.readyState !== WebSocket.OPEN || isSending) return;
-
-    try {
-      setIsSending(true);
-      const messageData = {
-        type: 'chat_message',
-        message: newMessage.trim(),
-        sender_type: 'customer',
-        timestamp: new Date().toISOString()
-      };
-
-      // Only send to server and wait for echo
-      ws.send(JSON.stringify(messageData));
-      setNewMessage('');
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast({
-        title: "Error",
-        description: "Failed to send message. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  // Scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
-    }
-  }, [messages]);
-
   if (loading) {
     return (
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading order details...</p>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex flex-col items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+          <p className="mt-4 text-gray-600">Loading order details...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 text-red-600 p-6 rounded-lg">
-        <p className="text-lg font-medium">{error}</p>
-        <p className="mt-2">Please try refreshing the page.</p>
+      <div className="container mx-auto px-4 py-8">
+        <div className="bg-red-50 text-red-600 p-6 rounded-lg">
+          <p className="text-lg font-medium">{error}</p>
+          <p className="mt-2">Please try refreshing the page.</p>
+        </div>
       </div>
     );
   }
 
   if (!order) {
     return (
-      <div className="text-center text-gray-600">
-        <p className="text-lg">Order not found</p>
+      <div className="container mx-auto px-4 py-8">
+        <div className="text-center text-gray-600">
+          <p className="text-lg">Order not found</p>
+          <p className="mt-2">The requested order could not be found.</p>
+        </div>
       </div>
     );
   }
@@ -663,125 +480,43 @@ const OrderTracking = () => {
           <div className="flex flex-col gap-4 mb-6">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Order #{orderId}</h2>
-              <OrderStatusBadge status={order.status} />
+              <div className="flex items-center gap-4">
+                <OrderStatusBadge status={order.status} />
+                <Button
+                  onClick={() => setShowChat(true)}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  Chat with Staff
+                </Button>
+              </div>
             </div>
+
+            <Progress value={ORDER_STATUS_STEPS[order.status] || 0} className="w-full" />
             
-            <Progress
-              value={ORDER_STATUS_STEPS[order.status] || 0}
-              className="w-full"
-            />
+            {/* Order Details */}
+            <div className="mt-4">
+              <h3 className="text-lg font-semibold mb-2">Order Details</h3>
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <p><strong>Status:</strong> {order.status}</p>
+                <p><strong>Table:</strong> {order.table_id || 'Not assigned'}</p>
+                <p><strong>Total:</strong> ${order.total_price}</p>
+              </div>
+            </div>
 
             {renderTableSelection()}
             {renderReviewForm()}
           </div>
         </div>
       </div>
-      
-      {/* Chat Section */}
-      <div className="mt-8 bg-white rounded-lg shadow-lg">
-        <div className="border-b p-4 bg-gray-50">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <span>Chat with Staff</span>
-            {ws?.readyState === WebSocket.OPEN && (
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2 h-2 bg-green-500 rounded-full" />
-                <span className="text-sm text-gray-600 font-normal">Connected</span>
-              </div>
-            )}
-            {ws?.readyState !== WebSocket.OPEN && (
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2 h-2 bg-red-500 rounded-full" />
-                <span className="text-sm text-gray-600 font-normal">Disconnected</span>
-              </div>
-            )}
-          </h2>
-        </div>
-        
-        <div 
-          ref={chatRef}
-          className="h-[400px] p-4 overflow-y-auto space-y-3 bg-gray-50"
-        >
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <p className="text-center">
-                No messages yet. Start the conversation!
-              </p>
-            </div>
-          ) : (
-            messages.map((msg, index) => (
-              <div
-                key={index}
-                className={`flex ${
-                  msg.sender_type === 'customer' ? 'justify-end' : 'justify-start'
-                } items-end space-x-2 mb-3`}
-              >
-                {msg.sender_type !== 'customer' && (
-                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
-                    <span className="text-white text-sm font-semibold">S</span>
-                  </div>
-                )}
-                <div
-                  className={`relative max-w-[70%] break-words p-3 rounded-lg ${
-                    msg.sender_type === 'customer'
-                      ? 'bg-blue-500 text-white rounded-br-none'
-                      : 'bg-green-600 text-white rounded-bl-none'
-                  }`}
-                >
-                  <p className="whitespace-pre-wrap text-sm">{msg.message}</p>
-                  <span className={`text-xs mt-1 block ${
-                    msg.sender_type === 'customer' ? 'text-blue-100' : 'text-white opacity-75'
-                  }`}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], { 
-                      hour: '2-digit', 
-                      minute: '2-digit'
-                    })}
-                  </span>
-                </div>
-                {msg.sender_type === 'customer' && (
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
-                    <span className="text-white text-sm font-semibold">Y</span>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
 
-        <form onSubmit={sendMessage} className="p-4 border-t">
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 bg-gray-50 focus:bg-white transition-colors"
-              disabled={!ws || ws.readyState !== WebSocket.OPEN}
-            />
-            <Button 
-              type="submit" 
-              disabled={!ws || ws.readyState !== WebSocket.OPEN || !newMessage.trim() || isSending}
-              className="bg-blue-500 hover:bg-blue-600 text-white disabled:bg-gray-300"
-            >
-              {isSending ? (
-                <div className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  <span>Sending...</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
-                  <span>Send</span>
-                </div>
-              )}
-            </Button>
-          </div>
-        </form>
-      </div>
+      {/* Chat Modal */}
+      <ChatModal
+        isOpen={showChat}
+        onClose={() => setShowChat(false)}
+        orderId={orderId}
+      />
     </div>
   );
 };

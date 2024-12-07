@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, MessageCircle } from "lucide-react";
 import { chatWebSocketService } from '@/services/chatWebSocket';
 import { useToast } from "@/components/ui/use-toast";
 
-const ChatModal = ({ isOpen, onClose, orderId }) => {
+export const ChatModal = ({ isOpen, onClose, orderId }) => {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [isSending, setIsSending] = useState(false);
@@ -165,5 +165,3 @@ const ChatModal = ({ isOpen, onClose, orderId }) => {
         </Dialog>
     );
 };
-
-export default ChatModal;
