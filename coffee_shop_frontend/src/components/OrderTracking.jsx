@@ -90,8 +90,9 @@ const OrderTracking = () => {
   const previousStatusRef = useRef(null);
   const { toast } = useToast();
 
-  // Fetch initial order data
+  // Fetch initial order data and connect to WebSocket for real-time updates
   useEffect(() => {
+    // Initial order fetch
     const fetchOrder = async () => {
       try {
         setLoading(true);
@@ -108,6 +109,54 @@ const OrderTracking = () => {
     };
 
     fetchOrder();
+
+    // Connect to WebSocket for real-time updates
+    const wsUrl = `${WS_URL}/order/${orderId}/`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected for order tracking');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'order_update') {
+          setOrder(prevOrder => ({
+            ...prevOrder,
+            ...data.order
+          }));
+
+          // Show notification for status changes
+          if (data.order.status !== previousStatusRef.current) {
+            toast({
+              title: "Order Status Updated",
+              description: `Status changed to ${data.order.status}`,
+              variant: "default",
+            });
+            previousStatusRef.current = data.order.status;
+          }
+        }
+      } catch (error) {
+        console.error('Error processing WebSocket message:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to real-time updates",
+        variant: "destructive",
+      });
+    };
+
+    // Cleanup function
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
   }, [orderId, toast]);
 
   const stopCamera = () => {
