@@ -93,10 +93,11 @@ const OrderTracking = () => {
         setOrder(response.data);
         previousStatusRef.current = response.data.status;
       } catch (err) {
-        setError(err.message);
+        console.error('Error fetching order:', err);
+        setError('Unable to find order. Please check your order number.');
         toast({
           title: "Error",
-          description: "Failed to load order details",
+          description: "Unable to find order. Please check your order number.",
           variant: "destructive",
         });
       } finally {
@@ -105,7 +106,7 @@ const OrderTracking = () => {
     };
 
     fetchOrder();
-  }, [orderId]);
+  }, [orderId, toast]);
 
   // Handle WebSocket connection and messages
   useEffect(() => {
@@ -118,31 +119,57 @@ const OrderTracking = () => {
         return;
       }
 
-      const socket = new WebSocket(`${WS_URL}/order/${orderId}/`);
+      const wsUrl = `${WS_URL}/order/${orderId}/`;
+      console.log('Connecting to WebSocket:', wsUrl);
+      
+      const socket = new WebSocket(wsUrl);
       wsRef.current = socket;
 
       socket.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected successfully');
         setError(null);
         reconnectAttempts = 0;
+        
+        // Request initial status
+        socket.send(JSON.stringify({ type: 'get_status' }));
       };
 
       socket.onmessage = (event) => {
-        handleWebSocketMessage(event.data);
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Received WebSocket message:', data);
+          
+          if (data.type === 'order_update') {
+            setOrder(data.order);
+            if (data.order.status !== previousStatusRef.current) {
+              previousStatusRef.current = data.order.status;
+              if (!hasShownToastRef.current) {
+                toast({
+                  title: "Order Status Updated",
+                  description: `Your order status is now: ${data.order.status}`,
+                });
+                hasShownToastRef.current = true;
+                setTimeout(() => {
+                  hasShownToastRef.current = false;
+                }, 5000);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error processing WebSocket message:', err);
+        }
       };
 
       socket.onclose = (event) => {
         console.log('WebSocket closed:', event);
-        
-        if (!event.wasClean && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttempts++;
           console.log(`Reconnecting... Attempt ${reconnectAttempts}`);
-          
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, RECONNECT_DELAY);
-        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-          setError('Connection lost. Please refresh the page.');
+        } else {
+          setError('Connection lost. Please refresh the page to reconnect.');
           toast({
             title: "Connection Lost",
             description: "Please refresh the page to reconnect",
@@ -161,7 +188,13 @@ const OrderTracking = () => {
 
     connect();
 
-    // Cleanup function
+    // Ping the server every 30 seconds to keep the connection alive
+    const pingInterval = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'get_status' }));
+      }
+    }, 30000);
+
     return () => {
       if (wsRef.current) {
         wsRef.current.close();
@@ -169,8 +202,9 @@ const OrderTracking = () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      clearInterval(pingInterval);
     };
-  }, [orderId]);
+  }, [orderId, toast]);
 
   // Handle order status changes
   useEffect(() => {

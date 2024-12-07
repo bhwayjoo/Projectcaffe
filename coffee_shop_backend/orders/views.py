@@ -72,7 +72,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     
     def get_permissions(self):
-        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table', 'review']:
+        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table', 'review', 'retrieve']:
             permission_classes = [AllowAny]
         else:
             permission_classes = [IsAuthenticated]

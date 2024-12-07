@@ -7,6 +7,10 @@ from .models import Order
 from chat.models import ChatMessage
 from .serializers import OrderSerializer
 from django.db import transaction
+from rest_framework_simplejwt.tokens import AccessToken
+from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
+from urllib.parse import parse_qs
 
 logger = logging.getLogger(__name__)
 
@@ -172,105 +176,79 @@ class OrderConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps(message))
 
 class OrderTrackingConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
-        self.order_id = self.scope['url_route']['kwargs']['order_id']
-        self.room_group_name = f'order_{self.order_id}'
-
-        # Join room group
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
-
-        await self.accept()
-        
-        # Send initial order data
+    @database_sync_to_async
+    def get_order(self, order_id):
         try:
-            order = await database_sync_to_async(Order.objects.get)(id=self.order_id)
+            order = Order.objects.get(id=order_id)
+            return OrderSerializer(order).data
+        except Order.DoesNotExist:
+            return None
+
+    async def connect(self):
+        try:
+            self.order_id = self.scope['url_route']['kwargs']['order_id']
+            self.room_group_name = f'order_{self.order_id}'
+
+            # Get and validate order
+            order_data = await self.get_order(self.order_id)
+            if not order_data:
+                logger.error(f"Order {self.order_id} not found")
+                await self.close(code=4004)
+                return
+
+            # Join room group
+            await self.channel_layer.group_add(
+                self.room_group_name,
+                self.channel_name
+            )
+
+            await self.accept()
             
-            @database_sync_to_async
-            def serialize_order(order):
-                return OrderSerializer(order).data
-                
-            order_data = await serialize_order(order)
-            
+            # Send initial order data
             await self.send(text_data=json.dumps({
-                'type': 'order_data',
+                'type': 'order_update',
                 'order': order_data
             }))
-        except Order.DoesNotExist:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': 'Order not found'
-            }))
+            
+            logger.info(f"Client connected to order tracking WebSocket for order {self.order_id}")
+
+        except Exception as e:
+            logger.error(f"Error in connect: {str(e)}")
             await self.close()
 
     async def disconnect(self, close_code):
-        # Leave room group
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        try:
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+            logger.info(f"Client disconnected from order tracking WebSocket with code: {close_code}")
+        except Exception as e:
+            logger.error(f"Error in disconnect: {str(e)}")
 
     async def receive(self, text_data):
         try:
             text_data_json = json.loads(text_data)
             message_type = text_data_json.get('type')
             
-            if message_type == 'status_update':
-                new_status = text_data_json.get('status')
-                if new_status:
-                    try:
-                        order = await database_sync_to_async(Order.objects.get)(id=self.order_id)
-                        
-                        @database_sync_to_async
-                        def update_order(order, status):
-                            order.status = status
-                            order.save()
-                            return OrderSerializer(order).data
-                        
-                        order_data = await update_order(order, new_status)
-                        
-                        # Broadcast the status update
-                        await self.channel_layer.group_send(
-                            self.room_group_name,
-                            {
-                                'type': 'order_status_update',
-                                'order': order_data
-                            }
-                        )
-                    except Order.DoesNotExist:
-                        await self.send(text_data=json.dumps({
-                            'type': 'error',
-                            'message': 'Order not found'
-                        }))
-                        
-        except json.JSONDecodeError:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': 'Invalid JSON format'
-            }))
-        except Exception as e:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': str(e)
-            }))
+            if message_type == 'get_status':
+                order_data = await self.get_order(self.order_id)
+                if order_data:
+                    await self.send(text_data=json.dumps({
+                        'type': 'order_update',
+                        'order': order_data
+                    }))
 
-    # Channel layer handlers
-    async def order_status_update(self, event):
-        """
-        Handler for order status updates
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'order_update',
-            'order': event['order']
-        }))
+        except Exception as e:
+            logger.error(f"Error in receive: {str(e)}")
 
     async def order_update(self, event):
-        """
-        Handler for general order updates
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'order_update',
-            'order': event['order']
-        }))
+        try:
+            order_data = await self.get_order(self.order_id)
+            if order_data:
+                await self.send(text_data=json.dumps({
+                    'type': 'order_update',
+                    'order': order_data
+                }))
+        except Exception as e:
+            logger.error(f"Error in order_update: {str(e)}")
