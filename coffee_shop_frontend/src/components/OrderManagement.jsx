@@ -228,42 +228,39 @@ const OrderManagement = () => {
   const handleChatOpen = (order) => {
     setSelectedOrder(order);
     setChatOpen(true);
-    // Clear unread count for this order
-    setUnreadMessages(prev => ({
-      ...prev,
-      [order.id]: 0
-    }));
+    // Connect to chat WebSocket when opening chat
+    chatWebSocketService.connect(order.id);
   };
 
   const handleChatClose = () => {
     setChatOpen(false);
-    setSelectedOrder(null);
+    setMessages([]);
+    chatWebSocketService.disconnect();
   };
 
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!newMessage.trim() || isSending) return;
-
-    try {
-      setIsSending(true);
-      await chatWebSocketService.sendMessage({
-        type: 'chat_message',
-        message: newMessage,
-        sender_type: 'staff',
-        timestamp: new Date().toISOString()
-      });
-      setNewMessage('');
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast({
-        title: "Error",
-        description: "Failed to send message. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSending(false);
-    }
+  const handleSendMessage = (message) => {
+    if (!selectedOrder) return;
+    
+    chatWebSocketService.sendMessage({
+      order_id: selectedOrder.id,
+      message: message,
+      sender_type: 'staff'
+    });
   };
+
+  const renderActionButtons = (order) => (
+    <div className="flex space-x-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => handleChatOpen(order)}
+      >
+        <MessageCircle className="h-4 w-4 mr-1" />
+        Chat
+      </Button>
+      {/* Other action buttons */}
+    </div>
+  );
 
   const updateOrderStatus = useMutation(
     async ({ orderId, status }) => {
@@ -604,7 +601,7 @@ const OrderManagement = () => {
               )}
             </div>
 
-            <form onSubmit={handleSendMessage} className="mt-4">
+            <form onSubmit={(e) => handleSendMessage(e, newMessage)} className="mt-4">
               <div className="flex gap-2">
                 <Input
                   type="text"
@@ -631,6 +628,13 @@ const OrderManagement = () => {
           </DialogContent>
         </Dialog>
       )}
+      <ChatModal
+        open={chatOpen}
+        onClose={handleChatClose}
+        messages={messages}
+        onSendMessage={handleSendMessage}
+        orderId={selectedOrder?.id}
+      />
     </div>
   );
 };
