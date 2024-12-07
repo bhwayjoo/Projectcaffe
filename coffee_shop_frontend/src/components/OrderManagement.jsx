@@ -228,15 +228,38 @@ const OrderManagement = () => {
   const handleChatOpen = (order) => {
     setSelectedOrder(order);
     setChatOpen(true);
-    // Connect to chat WebSocket when opening chat
-    chatWebSocketService.connect(order.id);
+    // Reset unread count for this order
+    setUnreadMessages(prev => ({
+      ...prev,
+      [order.id]: 0
+    }));
   };
 
   const handleChatClose = () => {
     setChatOpen(false);
-    setMessages([]);
-    chatWebSocketService.disconnect();
+    setSelectedOrder(null);
   };
+
+  // Subscribe to chat messages for unread count
+  useEffect(() => {
+    const handleChatMessage = (data) => {
+      if (data.type === 'chat_message' && data.sender_type === 'customer') {
+        // Only increment unread count if chat is not open for this order
+        if (!chatOpen || selectedOrder?.id !== data.order_id) {
+          setUnreadMessages(prev => ({
+            ...prev,
+            [data.order_id]: (prev[data.order_id] || 0) + 1
+          }));
+          // Play notification sound
+          const audio = new Audio('/notification.mp3');
+          audio.play().catch(e => console.log('Audio play failed:', e));
+        }
+      }
+    };
+
+    const unsubscribe = chatWebSocketService.subscribe(handleChatMessage);
+    return () => unsubscribe();
+  }, [chatOpen, selectedOrder]);
 
   const handleSendMessage = (message) => {
     if (!selectedOrder) return;
@@ -249,16 +272,20 @@ const OrderManagement = () => {
   };
 
   const renderActionButtons = (order) => (
-    <div className="flex space-x-2">
+    <div className="flex gap-2">
       <Button
-        variant="outline"
-        size="sm"
         onClick={() => handleChatOpen(order)}
+        className="relative bg-gray-500 hover:bg-gray-600 text-white"
+        size="sm"
       >
         <MessageCircle className="h-4 w-4 mr-1" />
         Chat
+        {unreadMessages[order.id] > 0 && (
+          <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full min-w-[20px] h-5 flex items-center justify-center px-1">
+            {unreadMessages[order.id]}
+          </span>
+        )}
       </Button>
-      {/* Other action buttons */}
     </div>
   );
 
@@ -549,92 +576,12 @@ const OrderManagement = () => {
 
       {/* Chat Modal */}
       {selectedOrder && (
-        <Dialog open={chatOpen} onOpenChange={setChatOpen}>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Chat - Order #{selectedOrder?.id}</DialogTitle>
-            </DialogHeader>
-            
-            <div 
-              ref={chatContainerRef}
-              className="flex flex-col space-y-4 h-[400px] overflow-y-auto p-4"
-            >
-              {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <p>No messages yet</p>
-                </div>
-              ) : (
-                messages.map((msg, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${
-                      msg.sender_type === 'staff' ? 'justify-end' : 'justify-start'
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[80%] p-3 rounded-lg ${
-                        msg.sender_type === 'staff'
-                          ? 'bg-blue-500 text-white ml-auto'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}
-                    >
-                      <p className="break-words">{msg.message}</p>
-                      <div className="flex items-center justify-end gap-1 mt-1">
-                        <span className={`text-xs ${
-                          msg.sender_type === 'staff' 
-                            ? 'text-blue-100' 
-                            : 'text-gray-500'
-                        }`}>
-                          {formatTime(msg.timestamp)}
-                        </span>
-                        {msg.sender_type === 'staff' && (
-                          msg.is_read ? (
-                            <CheckCheck className="h-3 w-3 text-blue-100" />
-                          ) : (
-                            <Check className="h-3 w-3 text-blue-100" />
-                          )
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <form onSubmit={(e) => handleSendMessage(e, newMessage)} className="mt-4">
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Type your message..."
-                  disabled={isSending}
-                  className="flex-1"
-                />
-                <Button 
-                  type="submit" 
-                  disabled={isSending || !newMessage.trim()}
-                  className="flex items-center gap-2"
-                >
-                  {isSending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  Send
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <ChatModal
+          open={chatOpen}
+          onClose={handleChatClose}
+          orderId={selectedOrder.id}
+        />
       )}
-      <ChatModal
-        open={chatOpen}
-        onClose={handleChatClose}
-        messages={messages}
-        onSendMessage={handleSendMessage}
-        orderId={selectedOrder?.id}
-      />
     </div>
   );
 };
