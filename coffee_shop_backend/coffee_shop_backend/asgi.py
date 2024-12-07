@@ -12,14 +12,16 @@ from channels.security.websocket import AllowedHostsOriginValidator
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'coffee_shop_backend.settings')
 django.setup()
 
-from orders.routing import websocket_urlpatterns
+from chat.routing import websocket_urlpatterns as chat_websocket_urlpatterns
+from orders.routing import websocket_urlpatterns as orders_websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
     "websocket": AllowedHostsOriginValidator(
         AuthMiddlewareStack(
             URLRouter(
-                websocket_urlpatterns
+                orders_websocket_urlpatterns +
+                chat_websocket_urlpatterns
             )
         )
     ),

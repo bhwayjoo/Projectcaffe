@@ -42,14 +42,15 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
-    'orders', 
-    'rest_framework_simplejwt',
     'channels',
+    'orders',
+    'chat',
 ]
+
 ASGI_APPLICATION = 'coffee_shop_backend.asgi.application'
 CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer'
     }
 }
 
@@ -114,18 +115,17 @@ MIDDLEWARE = [
 ]
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
-CHANNEL_LAYERS_CONFIG = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
-        "CONFIG": {
-            "allowed_hosts": ["*"],
-        },
-    },
-}
+# Allow WebSocket connections
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127.0.0.1:\d+$",
+]
 
 ROOT_URLCONF = 'coffee_shop_backend.urls'
 

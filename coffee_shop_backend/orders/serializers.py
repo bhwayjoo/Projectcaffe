@@ -128,6 +128,7 @@ class OrderReviewSerializer(serializers.ModelSerializer):
         model = OrderReview
         fields = ['id', 'order', 'rating', 'comment', 'created_at']
         read_only_fields = ['created_at']
+        extra_kwargs = {'order': {'write_only': True}}
 
 class BrokenItemSerializer(serializers.ModelSerializer):
     class Meta:

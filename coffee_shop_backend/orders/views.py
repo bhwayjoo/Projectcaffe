@@ -72,7 +72,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     
     def get_permissions(self):
-        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table']:
+        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table', 'review']:
             permission_classes = [AllowAny]
         else:
             permission_classes = [IsAuthenticated]
@@ -186,9 +186,17 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status != 'delivered':
             return Response({'error': 'Can only review delivered orders'}, status=status.HTTP_400_BAD_REQUEST)
         
-        serializer = OrderReviewSerializer(data=request.data)
+        # Check if order already has a review
+        if hasattr(order, 'review'):
+            return Response({'error': 'Order already has a review'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Add order to request data
+        review_data = request.data.copy()
+        review_data['order'] = order.id
+        
+        serializer = OrderReviewSerializer(data=review_data)
         if serializer.is_valid():
-            serializer.save(order=order)
+            serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
