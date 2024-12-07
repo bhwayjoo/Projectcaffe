@@ -14,7 +14,7 @@ import { Button } from "../components/ui/button";
 import { Loader2, MessageCircle } from "lucide-react";
 import { api } from "../api/customAcios";
 import { webSocketService } from "../services/websocket";
-import { menuWebSocketService } from '../services/menuWebSocket';
+import { orderTrackingWebSocketService } from '../services/orderTrackingWebSocket';
 import { chatWebSocketService } from '../services/chatWebSocket';
 import ChatModal from './ChatModal';
 import { useToast } from "./ui/use-toast";
@@ -30,148 +30,129 @@ const OrderManagement = () => {
   const [unreadMessages, setUnreadMessages] = useState({});
   const [localOrders, setLocalOrders] = useState([]);
   const audioRef = useRef(new Audio('/notification.mp3'));
+  const trackingUnsubscribes = useRef(new Map());
 
+  // Connect to main orders WebSocket
   useEffect(() => {
-    const handleWebSocketMessage = (data) => {
-      console.log('WebSocket message received:', data);
-      
-      if (data.type === 'connection_error') {
-        setConnectionError(data.message);
-        setIsConnected(false);
-        return;
-      }
-      
-      setIsConnected(true);
-      setConnectionError(null);
-
-      switch (data.type) {
-        case 'initial_orders':
-          setLocalOrders(data.orders);
-          break;
-
-        case 'new_order':
-          setLocalOrders(prevOrders => {
-            const exists = prevOrders.some(order => order.id === data.order.id);
-            if (!exists) {
-              audioRef.current.play().catch(e => console.log('Audio play failed:', e));
-              
-              toast({
-                title: "New Order",
-                description: `📝 New order #${data.order.id} received!`,
-                variant: "default",
-              });
-              return [...prevOrders, data.order];
-            }
-            return prevOrders;
-          });
-          break;
-
-        case 'order_update':
-          setLocalOrders(prevOrders => {
-            return prevOrders.map(order => {
-              if (order.id === data.order.id) {
-                if (order.status !== data.order.status) {
-                  const statusEmoji = {
-                    'pending': '⏳',
-                    'preparing': '👨‍🍳',
-                    'ready': '✅',
-                    'delivered': '🚚',
-                    'completed': '🎉',
-                    'cancelled': '❌',
-                    'paid': '💰'
-                  }[data.order.status] || '📋';
-
-                  audioRef.current.play().catch(e => console.log('Audio play failed:', e));
-
-                  toast({
-                    title: "Order Status Updated",
-                    description: `${statusEmoji} Order #${order.id} status: ${data.order.status.toUpperCase()}`,
-                    variant: "default",
-                  });
-                }
-                return { ...order, ...data.order };
-              }
-              return order;
-            });
-          });
-          break;
-
-        case 'chat_message':
-          if (data.sender_type === 'customer') {
-            const orderId = data.order_id;
-            if (!chatOpen || selectedOrder?.id !== orderId) {
-              setUnreadMessages(prev => ({
-                ...prev,
-                [orderId]: (prev[orderId] || 0) + 1
-              }));
-              audioRef.current.play().catch(e => console.log('Audio play failed:', e));
-              
-              toast({
-                title: "New Message",
-                description: `💬 New message from Order #${orderId}`,
-                variant: "default",
-              });
-            }
-          }
-          break;
-
-        case 'order_deleted':
-          setLocalOrders(prevOrders => {
-            return prevOrders.filter(order => order.id !== data.order_id);
-          });
-          toast({
-            title: "Order Removed",
-            description: `🗑️ Order #${data.order_id} has been removed`,
-            variant: "default",
-          });
-          break;
-      }
-    };
-
-    const setupWebSockets = () => {
-      try {
-        webSocketService.connect();
-        const adminUnsubscribe = webSocketService.subscribe(handleWebSocketMessage);
-
-        setIsConnected(true);
-        setConnectionError(null);
-
-        return () => {
-          adminUnsubscribe();
-          webSocketService.disconnect();
-        };
-      } catch (error) {
-        console.error('WebSocket connection error:', error);
-        setConnectionError('Failed to connect to order system');
-        setIsConnected(false);
-        return () => {};
-      }
-    };
-
-    const cleanup = setupWebSockets();
-    return () => cleanup();
-  }, [chatOpen, selectedOrder, toast]);
-
-  useEffect(() => {
-    let reconnectTimeout;
-
-    const handleReconnect = () => {
-      if (!isConnected) {
-        console.log('Attempting to reconnect...');
-        webSocketService.connect();
-      }
-    };
-
-    if (!isConnected) {
-      reconnectTimeout = setTimeout(handleReconnect, 5000);
-    }
+    webSocketService.connect();
+    const unsubscribe = webSocketService.subscribe(handleWebSocketMessage);
 
     return () => {
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
+      unsubscribe();
+      webSocketService.disconnect();
     };
-  }, [isConnected]);
+  }, []);
+
+  // Handle order tracking connections
+  useEffect(() => {
+    if (selectedOrder) {
+      // Connect to order tracking WebSocket
+      orderTrackingWebSocketService.connect(selectedOrder.id);
+      const unsubscribe = orderTrackingWebSocketService.subscribe(
+        selectedOrder.id,
+        handleOrderTrackingMessage
+      );
+      trackingUnsubscribes.current.set(selectedOrder.id, unsubscribe);
+
+      return () => {
+        if (trackingUnsubscribes.current.has(selectedOrder.id)) {
+          trackingUnsubscribes.current.get(selectedOrder.id)();
+          trackingUnsubscribes.current.delete(selectedOrder.id);
+        }
+        orderTrackingWebSocketService.disconnect(selectedOrder.id);
+      };
+    }
+  }, [selectedOrder?.id]);
+
+  const handleWebSocketMessage = (data) => {
+    console.log('WebSocket message received:', data);
+    
+    if (data.type === 'connection_error') {
+      setConnectionError(data.message);
+      setIsConnected(false);
+      return;
+    }
+    
+    setIsConnected(true);
+    setConnectionError(null);
+
+    switch (data.type) {
+      case 'initial_orders':
+        setLocalOrders(data.orders);
+        break;
+
+      case 'new_order':
+        setLocalOrders(prevOrders => {
+          const exists = prevOrders.some(order => order.id === data.order.id);
+          if (!exists) {
+            audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+            
+            toast({
+              title: "New Order",
+              description: `📝 New order #${data.order.id} received!`,
+              variant: "default",
+            });
+            return [...prevOrders, data.order];
+          }
+          return prevOrders;
+        });
+        break;
+
+      case 'order_update':
+        setLocalOrders(prevOrders => {
+          return prevOrders.map(order => {
+            if (order.id === data.order.id) {
+              // Update selected order if this is the one being updated
+              if (selectedOrder?.id === order.id) {
+                setSelectedOrder(data.order);
+              }
+
+              if (order.status !== data.order.status) {
+                const statusEmoji = {
+                  'pending': '⏳',
+                  'preparing': '👨‍🍳',
+                  'ready': '✅',
+                  'delivered': '🚚',
+                  'completed': '🎉',
+                  'cancelled': '❌',
+                  'paid': '💰'
+                }[data.order.status] || '📋';
+
+                audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+
+                toast({
+                  title: "Order Status Updated",
+                  description: `${statusEmoji} Order #${order.id} status: ${data.order.status.toUpperCase()}`,
+                  variant: "default",
+                });
+              }
+              return data.order;
+            }
+            return order;
+          });
+        });
+        break;
+
+      default:
+        console.log('Unknown message type:', data.type);
+    }
+  };
+
+  const handleOrderTrackingMessage = (data) => {
+    console.log('Order tracking message received:', data);
+
+    if (data.type === 'order_data' || data.type === 'order_update') {
+      // Update the selected order with the latest data
+      setSelectedOrder(data.order);
+      
+      // Also update the order in the local orders list
+      setLocalOrders(prevOrders => {
+        return prevOrders.map(order => 
+          order.id === data.order.id ? data.order : order
+        );
+      });
+    }
+  };
 
   const handleChatOpen = (order) => {
     setSelectedOrder(order);

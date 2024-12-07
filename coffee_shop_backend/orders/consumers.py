@@ -6,6 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from .models import Order
 from chat.models import ChatMessage
 from .serializers import OrderSerializer
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -132,149 +133,143 @@ class OrderConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard("orders", self.channel_name)
 
-    async def receive(self, text_data):
-        text_data_json = json.loads(text_data)
-        message_type = text_data_json.get('type')
-        
-        if message_type == 'new_order':
-            # Handle new order
-            order_data = text_data_json.get('order')
-            await self.channel_layer.group_send(
-                "orders",
-                {
-                    'type': 'order_message',
-                    'message': {
-                        'type': 'new_order',
-                        'order': order_data
-                    }
-                }
-            )
-        elif message_type == 'order_update':
-            # Handle order update
-            order_data = text_data_json.get('order')
-            await self.channel_layer.group_send(
-                "orders",
-                {
-                    'type': 'order_message',
-                    'message': {
-                        'type': 'order_update',
-                        'order': order_data
-                    }
-                }
-            )
-
-    async def order_message(self, event):
-        message = event['message']
-        await self.send(text_data=json.dumps(message))
-
     @database_sync_to_async
     def get_orders(self):
         orders = Order.objects.all().order_by('-created_at')
-        serializer = OrderSerializer(orders, many=True)
-        return serializer.data
-
-    async def notify_new_order(self, order_data):
-        await self.channel_layer.group_send(
-            "orders",
-            {
-                'type': 'order_message',
-                'message': {
-                    'type': 'new_order',
-                    'order': order_data
-                }
-            }
-        )
-
-    async def notify_order_update(self, order_data):
-        await self.channel_layer.group_send(
-            "orders",
-            {
-                'type': 'order_message',
-                'message': {
-                    'type': 'order_update',
-                    'order': order_data
-                }
-            }
-        )
-
-class OrderTrackingConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
-        try:
-            self.order_id = self.scope['url_route']['kwargs']['order_id']
-            self.room_group_name = f'order_{self.order_id}'
-
-            await self.channel_layer.group_add(
-                self.room_group_name,
-                self.channel_name
-            )
-            await self.accept()
-            logger.info(f"Client connected to order tracking WebSocket for order {self.order_id}")
-        except Exception as e:
-            logger.error(f"Error in tracking connect: {str(e)}")
-            await self.close()
-
-    async def disconnect(self, close_code):
-        try:
-            await self.channel_layer.group_discard(
-                self.room_group_name,
-                self.channel_name
-            )
-            logger.info(f"Client disconnected from order tracking WebSocket with code: {close_code}")
-        except Exception as e:
-            logger.error(f"Error in tracking disconnect: {str(e)}")
+        return OrderSerializer(orders, many=True).data
 
     async def receive(self, text_data):
         try:
-            data = json.loads(text_data)
-            message_type = data.get('type', '')
+            text_data_json = json.loads(text_data)
+            message_type = text_data_json.get('type')
             
-            if message_type == 'chat_message':
-                message = data.get('message', '')
-                sender_type = data.get('sender_type', 'client')
-                
-                # Save chat message to database
-                order = await database_sync_to_async(Order.objects.get)(id=self.order_id)
-                chat_message = await database_sync_to_async(ChatMessage.objects.create)(
-                    order=order,
-                    message=message,
-                    sender_type=sender_type
-                )
-                
-                # Broadcast the message to the group
+            if message_type == 'order_update':
+                order_data = text_data_json.get('order')
                 await self.channel_layer.group_send(
-                    self.room_group_name,
+                    "orders",
                     {
-                        'type': 'chat_message',
-                        'message': message,
-                        'sender_type': sender_type,
-                        'timestamp': chat_message.timestamp.isoformat()
+                        'type': 'order_message',
+                        'message': {
+                            'type': 'order_update',
+                            'order': order_data
+                        }
                     }
                 )
                 
         except json.JSONDecodeError:
-            logger.error("Invalid JSON format received in tracking")
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': 'Invalid JSON format'
             }))
         except Exception as e:
-            logger.error(f"Error in tracking receive: {str(e)}")
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': str(e)
             }))
 
-    async def chat_message(self, event):
-        # Send chat message to WebSocket
+    async def order_message(self, event):
+        message = event['message']
+        await self.send(text_data=json.dumps(message))
+
+class OrderTrackingConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.order_id = self.scope['url_route']['kwargs']['order_id']
+        self.room_group_name = f'order_{self.order_id}'
+
+        # Join room group
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+        
+        # Send initial order data
+        try:
+            order = await database_sync_to_async(Order.objects.get)(id=self.order_id)
+            
+            @database_sync_to_async
+            def serialize_order(order):
+                return OrderSerializer(order).data
+                
+            order_data = await serialize_order(order)
+            
+            await self.send(text_data=json.dumps({
+                'type': 'order_data',
+                'order': order_data
+            }))
+        except Order.DoesNotExist:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Order not found'
+            }))
+            await self.close()
+
+    async def disconnect(self, close_code):
+        # Leave room group
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
+
+    async def receive(self, text_data):
+        try:
+            text_data_json = json.loads(text_data)
+            message_type = text_data_json.get('type')
+            
+            if message_type == 'status_update':
+                new_status = text_data_json.get('status')
+                if new_status:
+                    try:
+                        order = await database_sync_to_async(Order.objects.get)(id=self.order_id)
+                        
+                        @database_sync_to_async
+                        def update_order(order, status):
+                            order.status = status
+                            order.save()
+                            return OrderSerializer(order).data
+                        
+                        order_data = await update_order(order, new_status)
+                        
+                        # Broadcast the status update
+                        await self.channel_layer.group_send(
+                            self.room_group_name,
+                            {
+                                'type': 'order_status_update',
+                                'order': order_data
+                            }
+                        )
+                    except Order.DoesNotExist:
+                        await self.send(text_data=json.dumps({
+                            'type': 'error',
+                            'message': 'Order not found'
+                        }))
+                        
+        except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON format'
+            }))
+        except Exception as e:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+
+    # Channel layer handlers
+    async def order_status_update(self, event):
+        """
+        Handler for order status updates
+        """
         await self.send(text_data=json.dumps({
-            'type': 'chat_message',
-            'message': event['message'],
-            'sender_type': event['sender_type'],
-            'timestamp': event['timestamp']
+            'type': 'order_update',
+            'order': event['order']
         }))
 
     async def order_update(self, event):
-        # Send order update to WebSocket
+        """
+        Handler for general order updates
+        """
         await self.send(text_data=json.dumps({
             'type': 'order_update',
             'order': event['order']

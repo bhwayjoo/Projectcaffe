@@ -82,19 +82,102 @@ const OrderTracking = () => {
   const hasShownToastRef = useRef(false);
   const previousStatusRef = useRef(null);
   const { toast } = useToast();
+  const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
-  // Effect for handling order status changes
+  // Fetch initial order data
+  useEffect(() => {
+    const fetchOrder = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/orders/${orderId}/`);
+        setOrder(response.data);
+        previousStatusRef.current = response.data.status;
+      } catch (err) {
+        setError(err.message);
+        toast({
+          title: "Error",
+          description: "Failed to load order details",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchOrder();
+  }, [orderId]);
+
+  // Handle WebSocket connection and messages
+  useEffect(() => {
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_DELAY = 3000;
+    let reconnectAttempts = 0;
+
+    const connect = () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        return;
+      }
+
+      const socket = new WebSocket(`${WS_URL}/order/${orderId}/`);
+      wsRef.current = socket;
+
+      socket.onopen = () => {
+        console.log('WebSocket connected');
+        setError(null);
+        reconnectAttempts = 0;
+      };
+
+      socket.onmessage = (event) => {
+        handleWebSocketMessage(event.data);
+      };
+
+      socket.onclose = (event) => {
+        console.log('WebSocket closed:', event);
+        
+        if (!event.wasClean && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          console.log(`Reconnecting... Attempt ${reconnectAttempts}`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, RECONNECT_DELAY);
+        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          setError('Connection lost. Please refresh the page.');
+          toast({
+            title: "Connection Lost",
+            description: "Please refresh the page to reconnect",
+            variant: "destructive",
+          });
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setError('Connection error. Please check your internet connection.');
+      };
+
+      setWs(socket);
+    };
+
+    connect();
+
+    // Cleanup function
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
+  }, [orderId]);
+
+  // Handle order status changes
   useEffect(() => {
     if (order?.status && previousStatusRef.current !== order.status) {
-      const emoji = getStatusEmoji(order.status);
-      toast({
-        title: "Order Updated",
-        description: `${emoji} Status: ${order.status}`,
-        variant: "default",
-      });
       previousStatusRef.current = order.status;
     }
-  }, [order?.status, toast]);
+  }, [order?.status]);
 
   const stopCamera = () => {
     if (cameraStreamRef.current) {
@@ -420,32 +503,61 @@ const OrderTracking = () => {
     );
   };
 
-  // Handle incoming WebSocket messages
   const handleWebSocketMessage = (data) => {
     try {
       const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
-      
-      if (parsedData.type === 'order_update') {
-        setOrder(parsedData.order);
-      } else if (parsedData.type === 'chat_message') {
-        // Add message to the chat
-        setMessages(prev => [...prev, {
-          text: parsedData.message,
-          sender: parsedData.sender_type,
-          timestamp: parsedData.timestamp || new Date().toISOString()
-        }]);
+      console.log('Parsed WebSocket message:', parsedData);
 
-        // Only show toast for staff messages
-        if (parsedData.sender_type === 'staff') {
+      switch (parsedData.type) {
+        case 'order_data':
+        case 'order_update':
+          if (parsedData.order) {
+            setOrder(prevOrder => {
+              // Only update and show toast if status has changed
+              if (prevOrder?.status !== parsedData.order.status) {
+                const emoji = getStatusEmoji(parsedData.order.status);
+                toast({
+                  title: "Order Status Updated",
+                  description: `${emoji} Status: ${parsedData.order.status.toUpperCase()}`,
+                  variant: "default",
+                });
+              }
+              return parsedData.order;
+            });
+          }
+          break;
+
+        case 'chat_message':
+          if (parsedData.message) {
+            setMessages(prev => [...prev, {
+              message: parsedData.message,
+              sender_type: parsedData.sender_type,
+              timestamp: parsedData.timestamp
+            }]);
+
+            // Play notification sound for customer messages
+            if (parsedData.sender_type === 'staff') {
+              const audio = new Audio('/notification.mp3');
+              audio.play().catch(e => console.log('Audio play failed:', e));
+            }
+          }
+          break;
+
+        case 'error':
+          console.error('WebSocket error message:', parsedData.message);
+          setError(parsedData.message);
           toast({
-            title: "New Message",
-            description: `Staff: ${parsedData.message}`,
-            variant: "default",
+            title: "Error",
+            description: parsedData.message,
+            variant: "destructive",
           });
-        }
+          break;
+
+        default:
+          console.log('Unknown message type:', parsedData.type);
       }
     } catch (error) {
-      console.error('Error processing WebSocket message:', error);
+      console.error('Error handling WebSocket message:', error);
     }
   };
 
@@ -477,108 +589,12 @@ const OrderTracking = () => {
     }
   };
 
-  // WebSocket connection setup
-  useEffect(() => {
-    let socket = null;
-    let reconnectTimer = null;
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_TIMEOUT = 2000;
-
-    const connectWebSocket = () => {
-      const wsUrl = `${WS_URL}/order/${orderId}/`;
-      console.log('Connecting to WebSocket:', wsUrl);
-      socket = new WebSocket(wsUrl);
-      setWs(socket);
-
-      socket.onopen = () => {
-        console.log('WebSocket connected successfully');
-        setError(null);
-        reconnectAttempts = 0;
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleWebSocketMessage(data);
-        } catch (error) {
-          console.error('Error processing WebSocket message:', error);
-        }
-      };
-
-      socket.onclose = (event) => {
-        console.log('WebSocket connection closed:', event);
-        if (!event.wasClean && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          setError(`Lost connection to server. Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
-          toast({
-            title: "Connection Lost",
-            description: "Attempting to reconnect...",
-            variant: "destructive",
-          });
-          reconnectTimer = setTimeout(connectWebSocket, RECONNECT_TIMEOUT * reconnectAttempts);
-        } else {
-          setError('Connection closed. Please refresh the page.');
-          toast({
-            title: "Connection Closed",
-            description: "Please refresh the page to reconnect.",
-            variant: "destructive",
-          });
-        }
-      };
-
-      socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('WebSocket connection error');
-      };
-    };
-
-    connectWebSocket();
-
-    return () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-      if (socket) {
-        socket.close();
-      }
-    };
-  }, [orderId]);
-
   // Scroll to bottom when new messages arrive
   useEffect(() => {
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }
   }, [messages]);
-
-  useEffect(() => {
-    const fetchOrder = async () => {
-      try {
-        const response = await axios.get(`${API_URL}/orders/${orderId}/track/`);
-        console.log('Order data received:', response.data);
-        setOrder(response.data);
-      } catch (error) {
-        console.error('Error fetching order:', error);
-        setError('Failed to load order details');
-        toast({
-          title: "Error",
-          description: "Failed to load order details",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchOrder();
-
-    return () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
-  }, [orderId, toast]);
 
   if (loading) {
     return (
@@ -665,24 +681,24 @@ const OrderTracking = () => {
               <div
                 key={index}
                 className={`flex ${
-                  msg.sender === 'customer' ? 'justify-end' : 'justify-start'
+                  msg.sender_type === 'customer' ? 'justify-end' : 'justify-start'
                 } items-end space-x-2 mb-3`}
               >
-                {msg.sender !== 'customer' && (
+                {msg.sender_type !== 'customer' && (
                   <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
                     <span className="text-white text-sm font-semibold">S</span>
                   </div>
                 )}
                 <div
                   className={`relative max-w-[70%] break-words p-3 rounded-lg ${
-                    msg.sender === 'customer'
+                    msg.sender_type === 'customer'
                       ? 'bg-blue-500 text-white rounded-br-none'
                       : 'bg-green-600 text-white rounded-bl-none'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap text-sm">{msg.text}</p>
+                  <p className="whitespace-pre-wrap text-sm">{msg.message}</p>
                   <span className={`text-xs mt-1 block ${
-                    msg.sender === 'customer' ? 'text-blue-100' : 'text-white opacity-75'
+                    msg.sender_type === 'customer' ? 'text-blue-100' : 'text-white opacity-75'
                   }`}>
                     {new Date(msg.timestamp).toLocaleTimeString([], { 
                       hour: '2-digit', 
@@ -690,7 +706,7 @@ const OrderTracking = () => {
                     })}
                   </span>
                 </div>
-                {msg.sender === 'customer' && (
+                {msg.sender_type === 'customer' && (
                   <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
                     <span className="text-white text-sm font-semibold">Y</span>
                   </div>
