@@ -7,48 +7,61 @@ class ChatWebSocketService {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectTimeout = null;
+        this.pingInterval = null;
         this.currentOrderId = null;
     }
 
     connect(orderId) {
-        if (this.ws?.readyState === WebSocket.OPEN && this.currentOrderId === orderId) {
-            console.log('Already connected to the same order chat');
-            return;
+        if (this.ws && this.currentOrderId === orderId) {
+            return; // Already connected to the same order
         }
 
-        // Disconnect if already connected
+        // Disconnect if connected to a different order
         if (this.ws) {
             this.disconnect();
         }
 
         this.currentOrderId = orderId;
-        const token = localStorage.getItem('token');
-        const wsUrl = `ws://127.0.0.1:8000/ws/chat/${orderId}/?token=${token}`;
+        const wsUrl = `ws://127.0.0.1:8000/ws/chat/${orderId}/`;
 
         try {
-            console.log('Connecting to WebSocket:', wsUrl);
             this.ws = new WebSocket(wsUrl);
-
+            
             this.ws.onopen = () => {
                 console.log('WebSocket connected');
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
+                this.startPingInterval();
                 this.processMessageQueue();
+                
+                // Request chat history
+                this.sendMessage({
+                    type: 'get_history',
+                    order_id: orderId
+                });
             };
 
             this.ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    console.log('Received message:', data);
+                const data = JSON.parse(event.data);
+                console.log('Received message:', data);
+                
+                if (data.type === 'chat_history') {
+                    // Handle chat history
+                    data.messages.forEach(msg => {
+                        this.notifySubscribers({
+                            type: 'chat_message',
+                            ...msg
+                        });
+                    });
+                } else {
                     this.notifySubscribers(data);
-                } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
                 }
             };
 
             this.ws.onclose = () => {
                 console.log('WebSocket disconnected');
                 this.isConnected = false;
+                this.stopPingInterval();
                 this.attemptReconnect();
             };
 
@@ -56,21 +69,23 @@ class ChatWebSocketService {
                 console.error('WebSocket error:', error);
                 this.isConnected = false;
             };
+
         } catch (error) {
             console.error('Error connecting to WebSocket:', error);
-            this.isConnected = false;
             this.attemptReconnect();
         }
     }
 
     disconnect() {
         if (this.ws) {
+            this.stopPingInterval();
             clearTimeout(this.reconnectTimeout);
             this.ws.close();
             this.ws = null;
             this.isConnected = false;
             this.currentOrderId = null;
             this.messageQueue = [];
+            this.subscribers.clear();
         }
     }
 
@@ -92,59 +107,72 @@ class ChatWebSocketService {
     }
 
     async sendMessage(message) {
-        return new Promise((resolve, reject) => {
-            const send = () => {
-                try {
-                    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                        throw new Error('WebSocket is not connected');
-                    }
-
-                    // Ensure message has all required fields
-                    const messageToSend = {
-                        type: 'chat_message',
-                        order_id: this.currentOrderId,
-                        message: typeof message === 'string' ? message : message.message,
-                        sender_type: 'staff',
-                        timestamp: new Date().toISOString(),
-                        ...message
-                    };
-
-                    console.log('Sending message:', messageToSend);
-                    this.ws.send(JSON.stringify(messageToSend));
-                    resolve();
-                } catch (error) {
-                    console.error('Error sending message:', error);
-                    reject(error);
-                }
+        if (typeof message === 'string') {
+            message = {
+                type: 'chat_message',
+                message: message,
+                sender_type: 'client',
+                timestamp: new Date().toISOString()
             };
+        }
 
-            if (!this.isConnected) {
-                console.log('WebSocket not connected, queueing message');
-                this.messageQueue.push({ message, resolve, reject });
-            } else {
-                send();
-            }
-        });
+        if (!this.isConnected) {
+            this.messageQueue.push(message);
+            return;
+        }
+
+        try {
+            this.ws.send(JSON.stringify(message));
+        } catch (error) {
+            console.error('Error sending message:', error);
+            this.messageQueue.push(message);
+            throw error;
+        }
     }
 
     processMessageQueue() {
-        console.log('Processing message queue:', this.messageQueue.length, 'messages');
         while (this.messageQueue.length > 0 && this.isConnected) {
-            const { message, resolve, reject } = this.messageQueue.shift();
-            this.sendMessage(message).then(resolve).catch(reject);
+            const message = this.messageQueue.shift();
+            try {
+                this.ws.send(JSON.stringify(message));
+            } catch (error) {
+                console.error('Error processing queued message:', error);
+                this.messageQueue.unshift(message); // Put the message back
+                break;
+            }
+        }
+    }
+
+    startPingInterval() {
+        this.stopPingInterval();
+        this.pingInterval = setInterval(() => {
+            if (this.isConnected) {
+                try {
+                    this.ws.send(JSON.stringify({ type: 'ping' }));
+                } catch (error) {
+                    console.error('Error sending ping:', error);
+                    this.attemptReconnect();
+                }
+            }
+        }, 30000); // Send ping every 30 seconds
+    }
+
+    stopPingInterval() {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
         }
     }
 
     attemptReconnect() {
-        if (this.reconnectAttempts >= this.maxReconnectAttempts || !this.currentOrderId) {
-            console.log('Max reconnection attempts reached or no order ID');
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            console.log('Max reconnection attempts reached');
             return;
         }
 
         const backoffTime = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-        console.log(`Attempting to reconnect in ${backoffTime}ms (Attempt ${this.reconnectAttempts + 1})`);
-
         this.reconnectTimeout = setTimeout(() => {
+            console.log(`Attempting to reconnect... (Attempt ${this.reconnectAttempts + 1})`);
             this.reconnectAttempts++;
             this.connect(this.currentOrderId);
         }, backoffTime);
