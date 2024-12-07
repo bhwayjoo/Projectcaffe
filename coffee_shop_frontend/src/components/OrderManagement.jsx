@@ -191,13 +191,10 @@ const OrderManagement = () => {
   const updateOrderStatus = useMutation(
     async ({ orderId, status }) => {
       try {
-        webSocketService.sendMessage({
-          type: 'order_update',
-          order: {
-            id: orderId,
-            status: status
-          }
+        const response = await api.post(`/orders/${orderId}/update_status/`, {
+          status: status
         });
+        return response.data;
       } catch (error) {
         console.error('Error updating order status:', error);
         toast({
@@ -205,15 +202,19 @@ const OrderManagement = () => {
           description: "Failed to update order status",
           variant: "destructive",
         });
+        throw error;
       }
     },
     {
       onSuccess: (data) => {
-        toast({
-          title: "Status Updated",
-          description: `Order #${data.id} status updated to ${data.status}`,
-          variant: "default",
-        });
+        if (data) {
+          toast({
+            title: "Status Updated",
+            description: `Order #${data.order.id} status updated to ${data.order.status}`,
+            variant: "default",
+          });
+          // No need to invalidate queries since we're using WebSocket for real-time updates
+        }
       }
     }
   );
