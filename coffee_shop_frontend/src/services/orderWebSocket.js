@@ -12,7 +12,7 @@ class OrderWebSocketService {
       return;
     }
 
-    const wsUrl = `ws://127.0.0.1:8000/ws/order/${orderId}/`;
+    const wsUrl = `${import.meta.env.VITE_WS_URL}/order/${orderId}/`;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {

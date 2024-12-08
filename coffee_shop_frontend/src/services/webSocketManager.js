@@ -227,7 +227,7 @@ class WebSocketService {
         }
 
         try {
-            this.socket = new WebSocket('ws://127.0.0.1:8000/ws/orders/');
+            this.socket = new WebSocket(`${import.meta.env.VITE_WS_URL}/orders/`);
 
             this.socket.onopen = () => {
                 console.log('WebSocket connected');

@@ -3,7 +3,7 @@ import { webSocketManager } from './webSocketManager';
 class WebSocketService {
     constructor() {
         this.messageQueue = [];
-        this.wsUrl = 'ws://127.0.0.1:8000/ws/orders/';
+        this.wsUrl = `${import.meta.env.VITE_WS_URL}/orders/`;
     }
 
     connect() {

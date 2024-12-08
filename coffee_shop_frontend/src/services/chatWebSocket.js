@@ -22,7 +22,7 @@ class ChatWebSocketService {
         }
 
         this.currentOrderId = orderId;
-        const wsUrl = `ws://127.0.0.1:8000/ws/chat/${orderId}/`;
+        const wsUrl = `${import.meta.env.VITE_WS_URL}/chat/${orderId}/`;
 
         try {
             this.ws = new WebSocket(wsUrl);

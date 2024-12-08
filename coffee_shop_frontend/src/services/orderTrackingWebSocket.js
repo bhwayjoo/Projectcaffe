@@ -7,7 +7,7 @@ class OrderTrackingWebSocketService {
     }
 
     connect(orderId) {
-        const wsUrl = `ws://127.0.0.1:8000/ws/order/${orderId}/`;
+        const wsUrl = `${import.meta.env.VITE_WS_URL}/order/${orderId}/`;
         const connection = this.getConnection(orderId);
         
         if (connection?.socket?.readyState === WebSocket.OPEN) {
@@ -24,12 +24,12 @@ class OrderTrackingWebSocketService {
     }
 
     getConnection(orderId) {
-        const wsUrl = `ws://127.0.0.1:8000/ws/order/${orderId}/`;
+        const wsUrl = `${import.meta.env.VITE_WS_URL}/order/${orderId}/`;
         return webSocketManager.getConnection(wsUrl);
     }
 
     disconnect(orderId) {
-        const wsUrl = `ws://127.0.0.1:8000/ws/order/${orderId}/`;
+        const wsUrl = `${import.meta.env.VITE_WS_URL}/order/${orderId}/`;
         webSocketManager.closeConnection(wsUrl);
         this.connections.delete(orderId);
     }

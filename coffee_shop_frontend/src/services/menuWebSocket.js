@@ -2,7 +2,7 @@ import { webSocketManager } from './webSocketManager';
 
 class MenuWebSocketService {
     constructor() {
-        this.wsUrl = 'ws://127.0.0.1:8000/ws/menu-orders/';
+        this.wsUrl = `${import.meta.env.VITE_WS_URL}/menu-orders/`;
     }
 
     connect() {
