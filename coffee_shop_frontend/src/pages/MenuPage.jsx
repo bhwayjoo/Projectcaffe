@@ -9,7 +9,7 @@ import { Camera, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import SvgIcon1 from "../logo/SvgIcon1";
-
+//ss
 const NFC_TABLE_MAPPING = {
   "43:66:75:f3": "1",
   "e3:18:4f:f3": "2",

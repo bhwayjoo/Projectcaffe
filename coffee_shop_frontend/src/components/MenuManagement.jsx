@@ -203,6 +203,11 @@ const MenuManagement = () => {
     }
   };
 
+  const getCategoryName = (categoryId) => {
+    const category = categories?.find((cat) => cat.id === categoryId);
+    return category ? category.name : "";
+  };
+
   return (
     <div className="p-6">
       <Card>
@@ -348,7 +353,7 @@ const MenuManagement = () => {
                           </p>
                           <p className="text-sm">${item.price}</p>
                           <p className="text-sm text-gray-500">
-                            Category: {item.category_name}
+                            Category: {getCategoryName(item.category)}
                           </p>
                           <p
                             className={`text-sm ${
@@ -369,7 +374,7 @@ const MenuManagement = () => {
                             setFormData({
                               name: item.name,
                               description: item.description,
-                              price: item.price,
+                              price: item.price.toString(),
                               category: item.category,
                               is_available: item.is_available,
                               image: null,

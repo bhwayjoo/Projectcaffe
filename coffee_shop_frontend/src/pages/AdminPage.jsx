@@ -2,10 +2,12 @@ import React from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Utensils, ClipboardList, Package, LogOut } from "lucide-react";
+import { Utensils, ClipboardList, Package, LogOut, BarChart2, MessageSquare } from "lucide-react";
 import MenuManagement from "../components/MenuManagement";
 import OrderManagement from "../components/OrderManagement";
 import Inventory from "../components/Inventory";
+import Reviews from "../components/Reviews";
+import SalesAnalytics from "../components/SalesAnalytics";
 import toast from "react-hot-toast";
 
 const AdminPage = () => {
@@ -28,18 +30,24 @@ const AdminPage = () => {
       label: "Inventory",
       icon: <Package className="h-4 w-4 mr-2" />,
     },
+    {
+      path: "/admin/analytics",
+      label: "Analytics",
+      icon: <BarChart2 className="h-4 w-4 mr-2" />,
+    },
+    {
+      path: "/admin/reviews",
+      label: "Reviews",
+      icon: <MessageSquare className="h-4 w-4 mr-2" />,
+    },
   ];
 
   const isActivePath = (path) => location.pathname === path;
 
   const handleLogout = () => {
     try {
-      // Clear authentication token
       localStorage.removeItem('token');
-      
-      // Redirect to login page
       navigate('/login');
-      
       toast.success('Logged out successfully');
     } catch (error) {
       console.error('Logout error:', error);
@@ -106,29 +114,14 @@ const AdminPage = () => {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 p-6">
-          <Card className="shadow-lg">
-            <CardContent className="p-6">
-              <Routes>
-                <Route path="/menu-management" element={<MenuManagement />} />
-                <Route path="/orders" element={<OrderManagement />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route
-                  path="/"
-                  element={
-                    <div className="text-center py-12">
-                      <h2 className="text-3xl font-bold mb-4 text-gray-800">
-                        Welcome to the Admin Panel
-                      </h2>
-                      <p className="text-gray-600 max-w-md mx-auto">
-                        Manage your menu items, track orders, and monitor inventory from one central location.
-                      </p>
-                    </div>
-                  }
-                />
-              </Routes>
-            </CardContent>
-          </Card>
+        <div className="flex-1 p-8">
+          <Routes>
+            <Route path="/menu-management" element={<MenuManagement />} />
+            <Route path="/orders" element={<OrderManagement />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/analytics" element={<SalesAnalytics />} />
+            <Route path="/reviews" element={<Reviews />} />
+          </Routes>
         </div>
       </div>
     </div>
