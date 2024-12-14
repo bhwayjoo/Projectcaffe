@@ -46,7 +46,7 @@ const AdminPage = () => {
 
   const handleLogout = () => {
     try {
-      localStorage.removeItem('token');
+      localStorage.clear();
       navigate('/login');
       toast.success('Logged out successfully');
     } catch (error) {
