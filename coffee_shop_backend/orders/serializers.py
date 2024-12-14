@@ -124,11 +124,22 @@ class OrderSerializer(serializers.ModelSerializer):
         return instance
 
 class OrderReviewSerializer(serializers.ModelSerializer):
+    order_id = serializers.IntegerField(source='order.id', read_only=True)
+    order_items = serializers.SerializerMethodField()
+    order_date = serializers.DateTimeField(source='order.created_at', read_only=True)
+    
     class Meta:
         model = OrderReview
-        fields = ['id', 'order', 'rating', 'comment', 'created_at']
+        fields = ['id', 'order', 'order_id', 'order_items', 'order_date', 'rating', 'comment', 'created_at']
         read_only_fields = ['created_at']
         extra_kwargs = {'order': {'write_only': True}}
+    
+    def get_order_items(self, obj):
+        return [{
+            'name': item.menu_item.name,
+            'quantity': item.quantity,
+            'price': str(item.menu_item.price)
+        } for item in obj.order.orderitem_set.all()]
 
 class BrokenItemSerializer(serializers.ModelSerializer):
     class Meta:

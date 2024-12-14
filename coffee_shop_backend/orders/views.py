@@ -72,7 +72,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     
     def get_permissions(self):
-        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table', 'review', 'retrieve']:
+        if self.action in ['create', 'track', 'update_status', 'cancel', 'update_table', 'review', 'retrieve', 'analytics']:
             permission_classes = [AllowAny]
         else:
             permission_classes = [IsAuthenticated]
@@ -266,64 +266,136 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def analytics(self, request):
-        # Get date range from query params or default to last 30 days
-        end_date = datetime.now().date()
-        start_date = self.request.query_params.get('start_date', None)
-        end_date_param = self.request.query_params.get('end_date', None)
+        try:
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            period = request.query_params.get('period', 'daily')
 
-        if start_date and end_date_param:
+            if not start_date or not end_date:
+                return Response(
+                    {'error': 'start_date and end_date are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             try:
-                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date = datetime.strptime(end_date_param, '%Y-%m-%d').date()
-            except ValueError:
-                start_date = end_date - timedelta(days=30)
-        else:
-            start_date = end_date - timedelta(days=30)
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Calculate analytics
-        orders = Order.objects.filter(
-            created_at__date__range=[start_date, end_date],
-            status='paid'
-        )
+            # Get daily sales for the current day
+            today = datetime.now().date()
+            daily_sales = Order.objects.filter(
+                created_at__date=today,
+                status='paid'
+            ).aggregate(
+                amount=Sum('total_amount'),
+                order_count=Count('id')
+            )
 
-        daily_sales = orders.filter(
-            created_at__date=end_date
-        ).aggregate(
-            total=Sum('total_amount'),
-            count=Count('id')
-        )
+            # Get period sales
+            period_sales = Order.objects.filter(
+                created_at__range=(start_date, end_date),
+                status='paid'
+            ).aggregate(
+                amount=Sum('total_amount'),
+                order_count=Count('id')
+            )
 
-        period_sales = orders.aggregate(
-            total=Sum('total_amount'),
-            count=Count('id')
-        )
+            # Ensure values are not None
+            daily_sales['amount'] = float(daily_sales['amount'] or 0)
+            daily_sales['order_count'] = int(daily_sales['order_count'] or 0)
+            period_sales['amount'] = float(period_sales['amount'] or 0)
+            period_sales['order_count'] = int(period_sales['order_count'] or 0)
 
-        # Get top selling items
-        top_items = OrderItem.objects.filter(
-            order__created_at__date__range=[start_date, end_date],
-            order__status='paid'
-        ).values(
-            'menu_item__name'
-        ).annotate(
-            total_quantity=Sum('quantity'),
-            total_sales=Sum(F('quantity') * F('menu_item__price'))
-        ).order_by('-total_quantity')[:5]
+            # Get top selling items
+            top_items = OrderItem.objects.filter(
+                order__created_at__range=(start_date, end_date),
+                order__status='paid'
+            ).values('menu_item__name').annotate(
+                total_quantity=Sum('quantity'),
+                total_sales=Sum(F('quantity') * F('menu_item__price'))
+            ).order_by('-total_quantity')[:5]
 
-        return Response({
-            'period': {
-                'start_date': start_date,
-                'end_date': end_date,
-            },
-            'daily_sales': {
-                'amount': daily_sales['total'] or 0,
-                'order_count': daily_sales['count'] or 0
-            },
-            'period_sales': {
-                'amount': period_sales['total'] or 0,
-                'order_count': period_sales['count'] or 0
-            },
-            'top_selling_items': list(top_items)
-        })
+            # Get time series data based on period
+            time_series_data = []
+            
+            # Get all orders in the period
+            orders = Order.objects.filter(
+                created_at__range=(start_date, end_date),
+                status='paid'
+            ).order_by('created_at')
+
+            # Group orders by period manually
+            current_period = {}
+            for order in orders:
+                if period == 'hourly':
+                    period_key = order.created_at.strftime('%Y-%m-%d %H:00:00')
+                elif period == 'daily':
+                    period_key = order.created_at.strftime('%Y-%m-%d')
+                elif period == 'monthly':
+                    period_key = order.created_at.strftime('%Y-%m')
+                else:  # yearly
+                    period_key = order.created_at.strftime('%Y')
+
+                if period_key not in current_period:
+                    current_period[period_key] = {
+                        'amount': 0,
+                        'order_count': 0
+                    }
+                
+                current_period[period_key]['amount'] += float(order.total_amount or 0)
+                current_period[period_key]['order_count'] += 1
+
+            # Convert grouped data to time series format
+            for period_key, data in sorted(current_period.items()):
+                if period == 'hourly':
+                    period_dt = datetime.strptime(period_key, '%Y-%m-%d %H:00:00')
+                elif period == 'daily':
+                    period_dt = datetime.strptime(period_key, '%Y-%m-%d')
+                elif period == 'monthly':
+                    period_dt = datetime.strptime(period_key, '%Y-%m')
+                else:  # yearly
+                    period_dt = datetime.strptime(period_key, '%Y')
+
+                time_series_data.append({
+                    'timestamp': period_dt.isoformat(),
+                    'amount': data['amount'],
+                    'order_count': data['order_count']
+                })
+
+            # Convert decimal values to float for JSON serialization
+            top_items_list = []
+            for item in top_items:
+                if item['menu_item__name']:
+                    top_items_list.append({
+                        'menu_item__name': item['menu_item__name'],
+                        'total_quantity': int(item['total_quantity'] or 0),
+                        'total_sales': float(item['total_sales'] or 0)
+                    })
+
+            return Response({
+                'period': {
+                    'start_date': start_date.date().isoformat(),
+                    'end_date': end_date.date().isoformat()
+                },
+                'daily_sales': daily_sales,
+                'period_sales': period_sales,
+                'top_selling_items': top_items_list,
+                'time_series': time_series_data
+            })
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in analytics endpoint: {str(e)}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'An error occurred while processing the analytics data'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # Broken Items Management
 class BrokenItemViewSet(viewsets.ModelViewSet):
@@ -337,6 +409,13 @@ class BrokenItemViewSet(viewsets.ModelViewSet):
         broken_item.mark_resolved()
         serializer = self.get_serializer(broken_item)
         return Response(serializer.data)
+
+
+# Order Review Management
+class OrderReviewViewSet(viewsets.ModelViewSet):
+    queryset = OrderReview.objects.all().order_by('-created_at')
+    serializer_class = OrderReviewSerializer
+    permission_classes = [AllowAny]
 
 
 # User Login API

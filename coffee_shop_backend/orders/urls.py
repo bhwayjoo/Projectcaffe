@@ -3,20 +3,22 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     CategoryViewSet,
     MenuItemViewSet,
-    TableViewSet,
     OrderViewSet,
+    TableViewSet,
     BrokenItemViewSet,
     LoginAPIView,
+    OrderReviewViewSet
 )
 
 
 # Define the Default Router for ViewSets
 router = DefaultRouter()
-router.register(r'categories', CategoryViewSet, basename='category')
-router.register(r'menu-items', MenuItemViewSet, basename='menuitem')
-router.register(r'tables', TableViewSet, basename='table')
-router.register(r'orders', OrderViewSet, basename='order')
-router.register(r'broken-items', BrokenItemViewSet, basename='brokenitem')
+router.register(r'categories', CategoryViewSet)
+router.register(r'menu-items', MenuItemViewSet)
+router.register(r'orders', OrderViewSet)
+router.register(r'tables', TableViewSet)
+router.register(r'broken-items', BrokenItemViewSet)
+router.register(r'reviews', OrderReviewViewSet)
 
 # Define urlpatterns
 urlpatterns = [
